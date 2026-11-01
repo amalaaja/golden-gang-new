@@ -55,15 +55,27 @@ export default function ProfilePage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-8 relative z-10">
-          <div className="bg-[#050608] p-4 rounded-2xl border border-white/5 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-              <Wallet size={22} />
+          {dbUser.role === 'admin' ? (
+            <div className="bg-[#050608] p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <Wallet size={22} />
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Kas Rekening Admin</p>
+                <p className="text-base font-mono-tech font-extrabold text-white mt-0.5">{formatMoney(dbUser.whiteMoney)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Saldo Rekening Putih</p>
-              <p className="text-base font-mono-tech font-extrabold text-white mt-0.5">{formatMoney(dbUser.whiteMoney)}</p>
+          ) : (
+            <div className="bg-[#050608] p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <ShieldCheck size={22} />
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Akses Faksi</p>
+                <p className="text-sm font-bold text-white mt-0.5">Anggota Sindikat Resmi</p>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="bg-[#050608] p-4 rounded-2xl border border-white/5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
