@@ -29,28 +29,25 @@ export default function TransaksiPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ type: '', text: '' });
 
-  // Daftar rekening yang dapat ditransaksikan (Akun sendiri selalu berada di paling atas)
+  // Hanya akun Admin yang memiliki Rekening Kas Uang Putih Faksi (Duit per member dihilangkan)
   const eligibleAccounts = React.useMemo(() => {
-    if (!dbUser) return [];
-    const myAcc = (users || []).find(u => u.id === dbUser.id || (u.username || '').toLowerCase() === (dbUser.username || '').toLowerCase()) || dbUser;
+    if (!admins || admins.length === 0) return [];
+    const approvedAdmins = admins.filter(a => a && a.status === 'approved');
+    if (approvedAdmins.length === 0) return [];
     
-    if (isAdmin) {
-      const otherAccounts = (users || []).filter(u => 
-        u && u.id && u.status === 'approved' && 
-        u.id !== myAcc.id && 
-        (u.username || '').toLowerCase() !== (myAcc.username || '').toLowerCase()
+    // Jika user aktif adalah admin, tempatkan akunnya di urutan pertama
+    if (dbUser) {
+      const myAdmin = approvedAdmins.find(a => 
+        a.id === dbUser.id || 
+        (a.username || '').toLowerCase() === (dbUser.username || '').toLowerCase()
       );
-      return [myAcc, ...otherAccounts];
-    }
-    
-    const list = [myAcc];
-    (admins || []).forEach(a => {
-      if (a && a.id !== myAcc.id && !list.some(x => x.id === a.id)) {
-        list.push(a);
+      if (myAdmin) {
+        const others = approvedAdmins.filter(a => a.id !== myAdmin.id);
+        return [myAdmin, ...others];
       }
-    });
-    return list;
-  }, [isAdmin, users, admins, dbUser]);
+    }
+    return approvedAdmins;
+  }, [admins, dbUser]);
 
   React.useEffect(() => {
     if (eligibleAccounts && eligibleAccounts.length > 0) {
@@ -255,7 +252,7 @@ export default function TransaksiPage() {
           {assetType === 'uang_putih' && (
             <div className="animate-in slide-in-from-top-2 duration-200">
               <label className="text-[9.5px] uppercase tracking-widest text-amber-400/90 font-bold mb-1.5 block">
-                Pilih Rekening Transaksi ({isAdmin ? 'Seluruh Anggota / Admin' : 'Rekening Sendiri / Admin'})
+                Pilih Rekening Kas Admin (Uang Putih Sindikat)
               </label>
               <select 
                 value={selectedAdminId} 
@@ -264,7 +261,7 @@ export default function TransaksiPage() {
               >
                 {eligibleAccounts.map(a => (
                   <option key={a.id} value={a.id}>
-                    Rekening @{a.username} ({a.role === 'admin' ? 'ADMIN' : 'MEMBER'}{a.id === dbUser?.id ? ' - Akun Saya' : ''}) - {formatMoney(a.whiteMoney)}
+                    Rekening Kas Admin @{a.username}{a.id === dbUser?.id ? ' (Akun Saya)' : ''} - {formatMoney(a.whiteMoney)}
                   </option>
                 ))}
               </select>
