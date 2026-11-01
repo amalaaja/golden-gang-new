@@ -906,9 +906,35 @@ export function GangProvider({ children }: { children: ReactNode }) {
     if (tx.type === 'SHOP_PURCHASE') {
       if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
         tx.itemsPayload.forEach(cartItem => {
-          const currentItem = items.find(i => i.id === cartItem.id || (i?.name || '').toLowerCase() === (cartItem?.name || '').toLowerCase());
+          const currentItem = items.find(i => 
+            i.id === cartItem.id || 
+            (i?.name || '').toLowerCase().trim() === (cartItem?.name || '').toLowerCase().trim()
+          );
           if (currentItem) {
             const newStock = Math.max(0, (Number(currentItem.stock) || 0) - (Number(cartItem.qty) || 1));
+            updateItemStock(currentItem.id, newStock);
+          }
+        });
+      } else {
+        // Fallback: Parsing teks nama barang & kuantitas dari tx.details atau tx.items (misal: "VEST BIRU (1x)")
+        const rawItems = tx.details || tx.items || '';
+        const parts = rawItems.split(',').map((s: string) => s.trim()).filter(Boolean);
+        
+        parts.forEach((part: string) => {
+          const match = part.match(/^(.*?)\s*\((\d+)x\)$/);
+          const itemName = match ? match[1].trim() : part.replace(/\(\d+x\)/g, '').trim();
+          const qty = match ? Number(match[2]) || 1 : (Number(tx.itemQty) || 1);
+          const cleanName = itemName.toLowerCase().trim();
+
+          const currentItem = items.find(i => 
+            (tx.selectedItemId && i.id === tx.selectedItemId) ||
+            (i?.name || '').trim().toLowerCase() === cleanName ||
+            cleanName.includes((i?.name || '').trim().toLowerCase()) ||
+            (i?.name || '').trim().toLowerCase().includes(cleanName)
+          );
+
+          if (currentItem) {
+            const newStock = Math.max(0, (Number(currentItem.stock) || 0) - qty);
             updateItemStock(currentItem.id, newStock);
           }
         });
@@ -920,10 +946,16 @@ export function GangProvider({ children }: { children: ReactNode }) {
         const curDirty = Number(gangStats?.dirtyMoney) || 0;
         updateDirtyMoney(Math.max(0, curDirty - totalCost));
       } else {
-        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
-        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
-        const curWhite = Number(targetAdmin?.whiteMoney ?? dbUser?.whiteMoney) || 0;
-        updateWhiteMoney(targetId, Math.max(0, curWhite - totalCost));
+        const buyer = users.find(u => (u.username || '').toLowerCase() === (tx.user || '').toLowerCase());
+        if (buyer) {
+          const curWhite = Number(buyer.whiteMoney) || 0;
+          updateWhiteMoney(buyer.id, Math.max(0, curWhite - totalCost));
+        } else {
+          const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
+          const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
+          const curWhite = Number(targetAdmin?.whiteMoney ?? dbUser?.whiteMoney) || 0;
+          updateWhiteMoney(targetId, Math.max(0, curWhite - totalCost));
+        }
       }
     }
 
@@ -1065,8 +1097,11 @@ export function GangProvider({ children }: { children: ReactNode }) {
   };
 
   const updateItemStock = (itemId: string, newStock: number) => {
+    const updatedStock = Math.max(0, Number(newStock) || 0);
+    const targetItem = items.find(i => i.id === itemId);
+
     setItems(prev => {
-      const updated = prev.map(item => item.id === itemId ? { ...item, stock: newStock } : item);
+      const updated = prev.map(item => item.id === itemId ? { ...item, stock: updatedStock } : item);
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('gang_items', JSON.stringify(updated));
@@ -1075,17 +1110,32 @@ export function GangProvider({ children }: { children: ReactNode }) {
       return updated;
     });
 
-    updateDoc(doc(db, ITEMS_PATH, itemId), { stock: newStock }).catch(() => {});
+    updateDoc(doc(db, ITEMS_PATH, itemId), { stock: updatedStock }).catch(() => {});
 
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('items').update({ stock: newStock }).eq('id', itemId));
+      if (targetItem) {
+        safeSupabase(
+          supabase.from('items').upsert({
+            id: itemId,
+            name: targetItem.name,
+            category: targetItem.category || 'ITEM',
+            vault: targetItem.vault || 'Brankas Utama',
+            stock: updatedStock,
+            in_shop: Boolean(targetItem.inShop),
+            price: Number(targetItem.price) || 0,
+            image: targetItem.image || ''
+          })
+        );
+      } else {
+        safeSupabase(supabase.from('items').update({ stock: updatedStock }).eq('id', itemId));
+      }
     }
 
     try {
       fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_item_stock', itemId, newStock })
+        body: JSON.stringify({ action: 'update_item_stock', itemId, newStock: updatedStock })
       }).catch(() => {});
     } catch (e) {}
   };
