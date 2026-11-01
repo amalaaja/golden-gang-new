@@ -290,6 +290,10 @@ export function GangProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
     const syncAllFromApi = async () => {
+      // Jika Supabase aktif, Supabase adalah sumber utama database online (Single Source of Truth).
+      // Jangan timpa data Supabase dengan file statis lokal /api/sync.
+      if (isSupabaseConfigured) return;
+
       try {
         const res = await fetch('/api/sync');
         if (res.ok) {
@@ -346,9 +350,12 @@ export function GangProvider({ children }: { children: ReactNode }) {
               }
             }
 
-            // 4. Sync Transactions
-            if (Array.isArray(data.transactions)) {
-              setTransactions(data.transactions);
+            // 4. Sync Transactions (Hanya jika ada data, JANGAN timpa jika kosong)
+            if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+              setTransactions(prev => {
+                const merged = deduplicateTransactions([...data.transactions, ...prev]);
+                return merged;
+              });
               if (typeof window !== 'undefined') {
                 try {
                   localStorage.setItem('gang_transactions', JSON.stringify(data.transactions));
@@ -463,7 +470,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // 4. Listener & Sinkronisasi Supabase Real-time (Jika Aktif)
+  // 4. Listener & Sinkronisasi Supabase Real-time & Polling (Jika Aktif)
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let isMounted = true;
@@ -472,7 +479,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       try {
         // Ambil Data Pengguna
         const { data: suUsers } = await supabase.from('users').select('*');
-        if (isMounted && suUsers && suUsers.length > 0) {
+        if (isMounted && suUsers && Array.isArray(suUsers)) {
           const mappedUsers: DbUser[] = suUsers.map(u => ({
             id: u.id,
             username: u.username,
@@ -484,27 +491,58 @@ export function GangProvider({ children }: { children: ReactNode }) {
             joinedAt: u.created_at
           }));
           setUsers(mappedUsers);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_all_users', JSON.stringify(mappedUsers));
+            } catch (e) {}
+          }
+          // Sinkronkan status/role akun aktif jika berubah di Supabase
+          setDbUser(prev => {
+            if (!prev) return null;
+            const fresh = mappedUsers.find(u => 
+              (u.id && prev.id && u.id === prev.id) || 
+              (u.username.toLowerCase() === prev.username.toLowerCase())
+            );
+            if (fresh && (prev.role !== fresh.role || prev.status !== fresh.status || prev.whiteMoney !== fresh.whiteMoney)) {
+              const updatedUser = { ...prev, ...fresh };
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('gang_active_user', JSON.stringify(updatedUser));
+                } catch (e) {}
+              }
+              return updatedUser;
+            }
+            return prev;
+          });
         }
 
         // Ambil Data Barang Brankas
         const { data: suItems } = await supabase.from('items').select('*');
-        if (isMounted && suItems && suItems.length > 0) {
+        if (isMounted && suItems && Array.isArray(suItems) && suItems.length > 0) {
           const mappedItems: Item[] = suItems.map(i => ({
             id: i.id,
             name: i.name,
-            category: i.category,
-            vault: i.vault,
+            category: i.category || 'ITEM',
+            vault: i.vault || 'Brankas Utama',
             stock: Number(i.stock) || 0,
             inShop: Boolean(i.in_shop ?? i.inShop),
             price: Number(i.price) || 0,
             image: i.image
           }));
           setItems(mappedItems);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_items', JSON.stringify(mappedItems));
+            } catch (e) {}
+          }
         }
 
         // Ambil Data Transaksi & Antrean ACC
-        const { data: suTx } = await supabase.from('transactions').select('*').order('created_at_ms', { ascending: false });
-        if (isMounted && suTx && suTx.length > 0) {
+        const { data: suTx, error: txError } = await supabase.from('transactions').select('*');
+        if (txError) {
+          console.warn("Supabase tx fetch error:", txError);
+        }
+        if (isMounted && suTx && Array.isArray(suTx)) {
           const mappedTx: Transaction[] = suTx.map(t => ({
             id: t.id,
             type: t.type,
@@ -513,22 +551,42 @@ export function GangProvider({ children }: { children: ReactNode }) {
             details: t.details || t.items,
             items: t.items,
             amount: Number(t.amount) || 0,
-            totalPrice: Number(t.total_price ?? t.totalPrice) || 0,
-            paymentMethod: t.payment_method || t.paymentMethod,
-            status: t.status || 'pending',
-            note: t.note,
-            timestamp: t.created_at,
-            createdAtMs: Number(t.created_at_ms) || Date.now(),
+            totalPrice: Number(t.total_price ?? t.totalPrice ?? t.amount) || 0,
+            paymentMethod: t.payment_method || t.paymentMethod || 'uang_putih',
+            status: ((t.status || 'pending').toLowerCase()) as any,
+            note: t.note || '',
+            timestamp: t.created_at || new Date().toISOString(),
+            createdAtMs: Number(t.created_at_ms) || (t.created_at ? new Date(t.created_at).getTime() : Date.now()),
             approvedBy: t.approved_by,
             rejectedBy: t.rejected_by
           }));
+
+          // Urutkan transaksi dari yang paling baru
+          mappedTx.sort((a, b) => {
+            const timeB = getTxMillis(b);
+            const timeA = getTxMillis(a);
+            if (timeB !== timeA) return timeB - timeA;
+            return (b.id || '').localeCompare(a.id || '');
+          });
+
           setTransactions(mappedTx);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_transactions', JSON.stringify(mappedTx.slice(0, 100)));
+            } catch (e) {}
+          }
         }
 
         // Ambil Data Kas Faksi
         const { data: suStats } = await supabase.from('gang_stats').select('*').eq('id', 'main').maybeSingle();
         if (isMounted && suStats) {
-          setGangStats({ dirtyMoney: Number(suStats.dirty_money) || 0 });
+          const dirty = Number(suStats.dirty_money) || 0;
+          setGangStats({ dirtyMoney: dirty });
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_stats', JSON.stringify({ dirtyMoney: dirty }));
+            } catch (e) {}
+          }
         }
       } catch (err) {
         console.warn("Supabase fetch warning:", err);
@@ -536,6 +594,9 @@ export function GangProvider({ children }: { children: ReactNode }) {
     };
 
     fetchAllFromSupabase();
+
+    // Polling berkala setiap 2.5 detik agar transaksi selalu muncul otomatis tanpa reload
+    const pollInterval = setInterval(fetchAllFromSupabase, 2500);
 
     // Subscribe ke Postgres Changes Realtime Supabase
     const channel = supabase
@@ -547,6 +608,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     return () => {
       isMounted = false;
+      clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -573,6 +635,12 @@ export function GangProvider({ children }: { children: ReactNode }) {
           };
           if (userObj.password && userObj.password !== cleanPass) {
             return { success: false, message: 'Kata sandi akun salah!' };
+          }
+          // Jika username alvaro atau admin utama, pastikan status approved
+          if (userObj.username.toLowerCase() === 'alvaro' && userObj.status === 'pending') {
+            userObj.status = 'approved';
+            userObj.role = 'admin';
+            safeSupabase(supabase.from('users').update({ status: 'approved', role: 'admin' }).eq('id', userObj.id));
           }
           if (userObj.status === 'pending') {
             return { 
@@ -664,7 +732,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
       return { success: false, message: 'Username sudah terdaftar! Silakan gunakan username lain atau login.' };
     }
 
-    const isFirstUser = users.length === 0;
+    const hasAdmin = users.some(u => u.role === 'admin' && u.status === 'approved');
+    const isFirstUser = users.length === 0 || !hasAdmin || cleanUser === 'alvaro';
     const newMember: DbUser = {
       id: `user_${Date.now()}`,
       username: cleanUser,
@@ -672,9 +741,16 @@ export function GangProvider({ children }: { children: ReactNode }) {
       password: cleanPass,
       role: isFirstUser ? 'admin' : 'member',
       status: isFirstUser ? 'approved' : 'pending',
-      whiteMoney: isFirstUser ? 25000000 : 0,
+      whiteMoney: isFirstUser ? 25000000 : 5000000,
       joinedAt: new Date().toISOString()
     };
+
+    if (isFirstUser) {
+      setDbUser(newMember);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('gang_active_user', JSON.stringify(newMember));
+      }
+    }
 
     setUsers(prev => {
       const updated = [...prev.filter(u => (u?.username || '').toLowerCase() !== cleanUser), newMember];
@@ -937,6 +1013,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       safeSupabase(
         supabase.from('transactions').update({
           status: 'approved',
+          approved_by: adminName,
           created_at_ms: now
         }).eq('id', txId)
       );
@@ -972,7 +1049,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
     if (isSupabaseConfigured) {
       safeSupabase(
         supabase.from('transactions').update({
-          status: 'rejected'
+          status: 'rejected',
+          rejected_by: adminName
         }).eq('id', txId)
       );
     }
