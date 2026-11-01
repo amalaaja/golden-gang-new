@@ -129,11 +129,8 @@ export default function ShopPage() {
         throw new Error("Saldo Uang Merah faksi tidak mencukupi untuk pembayaran ini.");
       }
 
-      const admin = admins.find(a => a.id === selectedAdminId) || admins[0];
-      const targetWhiteMoney = Number(admin?.whiteMoney ?? dbUser.whiteMoney) || 15000000;
-      if (paymentMethod === 'uang_putih' && targetWhiteMoney < cartTotal) {
-        throw new Error("Saldo Uang Putih pada rekening yang dipilih tidak mencukupi.");
-      }
+      const targetAdmin = admins.find(a => a.id === selectedAdminId) || admins[0];
+      const targetAdminName = targetAdmin ? targetAdmin.username.replace('@', '') : 'alvaro';
 
       // 1. Verifikasi Kecukupan Stok Item
       for (const item of cart) {
@@ -147,6 +144,10 @@ export default function ShopPage() {
       // 2. Catat Permintaan Pembelian ke Antrian Validasi (Wajib di-ACC Admin)
       const activeUser = (dbUser?.username || 'member').replace('@', '');
       const itemDetails = cart.map(i => `${i.name} (${i.qty}x)`).join(', ');
+      const notePayment = paymentMethod === 'uang_putih' 
+        ? `Pembelian Toko Internal (Uang Putih) - Rek: @${targetAdminName}`
+        : `Pembelian Toko Internal (Uang Merah)`;
+
       addTransaction({
         type: 'SHOP_PURCHASE',
         user: activeUser,
@@ -155,11 +156,11 @@ export default function ShopPage() {
         totalPrice: cartTotal,
         amount: cartTotal,
         paymentMethod: paymentMethod,
-        note: `Pembelian Toko Internal (${paymentMethod === 'uang_merah' ? 'Uang Merah' : 'Uang Putih'})`,
+        note: notePayment,
         createdAtMs: Date.now(),
         status: 'pending',
         itemsPayload: cart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 })),
-        targetAdminId: selectedAdminId || admins[0]?.id
+        targetAdminId: targetAdmin?.id || selectedAdminId || admins[0]?.id
       });
 
       setCart([]);
