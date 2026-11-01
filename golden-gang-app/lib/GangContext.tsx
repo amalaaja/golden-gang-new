@@ -1,0 +1,1422 @@
+'use client';
+
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { 
+  User, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged,
+  signOut 
+} from 'firebase/auth';
+import { 
+  doc, 
+  setDoc, 
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot, 
+  collection, 
+  serverTimestamp,
+} from 'firebase/firestore';
+import { auth, db, USERS_PATH, ITEMS_PATH, TX_PATH, STATS_PATH } from './firebase';
+import { supabase, isSupabaseConfigured, safeSupabase } from './supabase';
+
+export interface DbUser {
+  id: string;
+  username: string;
+  icName?: string;
+  password?: string;
+  role: 'admin' | 'member';
+  status: 'pending' | 'approved' | 'rejected';
+  whiteMoney: number;
+  joinedAt?: any;
+}
+
+export interface Item {
+  id: string;
+  name: string;
+  category: string;
+  vault: string;
+  stock: number;
+  inShop?: boolean;
+  price?: number;
+  image?: string;
+}
+
+export interface Transaction {
+  id: string;
+  type: string;
+  user: string;
+  asset?: string;
+  details?: string;
+  items?: string;
+  totalPrice?: number;
+  amount?: number;
+  note?: string;
+  paymentMethod?: string;
+  timestamp?: any;
+  createdAtMs?: number;
+  status?: 'pending' | 'approved' | 'rejected';
+  validatedBy?: string;
+  validatedAt?: any;
+  itemsPayload?: Array<{ id: string; name: string; qty: number; price: number }>;
+  targetAdminId?: string;
+  selectedItemId?: string;
+  itemQty?: number;
+}
+
+interface NewTransactionInput {
+  type: string;
+  user: string;
+  asset?: string;
+  details?: string;
+  items?: string;
+  totalPrice?: number;
+  amount?: number;
+  itemQty?: number;
+  note?: string;
+  paymentMethod?: string;
+  createdAtMs?: number;
+  status?: 'pending' | 'approved' | 'rejected';
+  itemsPayload?: Array<{ id: string; name: string; qty: number; price: number }>;
+  targetAdminId?: string;
+  selectedItemId?: string;
+}
+
+interface GangContextType {
+  user: User | null;
+  dbUser: DbUser | null;
+  authLoading: boolean;
+  users: DbUser[];
+  admins: DbUser[];
+  isAdmin: boolean;
+  items: Item[];
+  transactions: Transaction[];
+  gangStats: { dirtyMoney: number };
+  handleLogin: (username: string, pass: string) => Promise<{ success: boolean; message?: string }>;
+  handleRegister?: (username: string, pass: string, icName?: string) => Promise<{ success: boolean; message?: string }>;
+  handleLogout: () => Promise<void>;
+  addTransaction: (data: NewTransactionInput) => string;
+  approveTransaction: (txId: string) => Promise<void>;
+  rejectTransaction: (txId: string) => Promise<void>;
+  updateItemStock: (itemId: string, newStock: number) => void;
+  updateItemImage: (itemId: string, newImage: string) => void;
+  addNewItem: (data: Omit<Item, 'id'>) => Promise<string>;
+  editItem: (itemId: string, updates: Partial<Item>) => Promise<void>;
+  deleteItem: (itemId: string) => Promise<void>;
+  updateShopSettings: (shopData: Record<string, { inShop: boolean; price: number }>) => Promise<void>;
+  updateUserStatus: (userId: string, status: 'approved' | 'rejected') => Promise<void>;
+  updateUserRole: (userId: string, role: string) => Promise<void>;
+  updateDirtyMoney: (newTotal: number) => void;
+  updateWhiteMoney: (userId: string, newTotal: number) => void;
+  handleJoinGang?: (username: string) => Promise<void>;
+}
+
+// Akun Admin Uji Coba Default
+export const DEFAULT_ADMIN_ACCOUNT: DbUser = {
+  id: 'user_alvaro',
+  username: 'alvaro',
+  icName: 'Alvaro Cortez',
+  password: '112233',
+  role: 'admin',
+  status: 'approved',
+  whiteMoney: 25000000,
+};
+
+// Akun Member / User Pembeli Default
+export const DEFAULT_MEMBER_ACCOUNT: DbUser = {
+  id: 'user_member_1',
+  username: 'member_sindikat',
+  icName: 'Marcus Vance',
+  password: '112233',
+  role: 'member',
+  status: 'approved',
+  whiteMoney: 5000000,
+};
+
+export const INITIAL_SAMPLE_USERS: DbUser[] = [];
+
+const INITIAL_SAMPLE_ITEMS: Item[] = [];
+
+export const getMillis = (ts: any): number => {
+  if (!ts) return 0;
+  if (typeof ts === 'number') return ts > 0 ? ts : 0;
+  if (typeof ts?.toMillis === 'function') {
+    const val = ts.toMillis();
+    return val > 0 ? val : 0;
+  }
+  if (typeof ts?.toDate === 'function') {
+    const d = ts.toDate();
+    return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : 0;
+  }
+  if (ts?.seconds !== undefined) {
+    return Number(ts.seconds) * 1000 + (ts.nanoseconds ? Math.floor(Number(ts.nanoseconds) / 1000000) : 0);
+  }
+  if (ts?._seconds !== undefined) {
+    return Number(ts._seconds) * 1000;
+  }
+  if (ts instanceof Date) {
+    const val = ts.getTime();
+    return !isNaN(val) ? val : 0;
+  }
+  if (typeof ts === 'string') {
+    const parsed = new Date(ts).getTime();
+    return !isNaN(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+export const getTxMillis = (item: any): number => {
+  if (!item) return 0;
+  if (typeof item === 'object') {
+    if (typeof item.createdAtMs === 'number' && item.createdAtMs > 0) return item.createdAtMs;
+    if (item.timestamp) {
+      const m = getMillis(item.timestamp);
+      if (m > 0) return m;
+    }
+    if (item.createdAt) {
+      const m = getMillis(item.createdAt);
+      if (m > 0) return m;
+    }
+  }
+  return getMillis(item);
+};
+
+export const deduplicateTransactions = (list: Transaction[]): Transaction[] => {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  const seenSignatures = new Set<string>();
+  const result: Transaction[] = [];
+
+  for (const tx of list) {
+    if (!tx || !tx.id) continue;
+    if (seenIds.has(tx.id)) continue;
+
+    // Duplikasi hanya di-drop jika transaksi identik persis dieksekusi bersamaan dalam rentang 3 detik
+    const txTime = getTxMillis(tx);
+    const timeBucket = Math.floor(txTime / 3000);
+    const sigContent = `${(tx.user || '').toLowerCase()}_${tx.type || ''}_${tx.details || tx.items || ''}_${tx.amount || tx.totalPrice || 0}_${timeBucket}`;
+    if (timeBucket > 0 && seenSignatures.has(sigContent)) continue;
+
+    seenIds.add(tx.id);
+    if (timeBucket > 0) seenSignatures.add(sigContent);
+    result.push(tx);
+  }
+
+  return result;
+};
+
+const GangContext = createContext<GangContextType | undefined>(undefined);
+
+export function GangProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [dbUser, setDbUser] = useState<DbUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [users, setUsers] = useState<DbUser[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [gangStats, setGangStats] = useState<{ dirtyMoney: number }>({ dirtyMoney: 0 });
+
+  // 1. Muat sesi login tersimpan & data persisten
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const savedUser = localStorage.getItem('gang_active_user');
+        if (savedUser) {
+          const parsed = JSON.parse(savedUser);
+          if (parsed && parsed.username) {
+            setDbUser(parsed);
+          }
+        }
+
+        const savedAllUsers = localStorage.getItem('gang_all_users');
+        if (savedAllUsers) {
+          try {
+            const parsed = JSON.parse(savedAllUsers);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setUsers(parsed);
+            }
+          } catch (e) {}
+        }
+
+        const savedTx = localStorage.getItem('gang_transactions');
+        if (savedTx) {
+          const parsed = JSON.parse(savedTx);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const cleanList = parsed.filter(t => t && typeof t === 'object' && t.id);
+            const sorted = deduplicateTransactions(cleanList).sort((a, b) => {
+              const diff = getTxMillis(b) - getTxMillis(a);
+              if (diff !== 0) return diff;
+              return (b?.id || '').localeCompare(a?.id || '');
+            });
+            setTransactions(sorted);
+          }
+        }
+
+        const savedStats = localStorage.getItem('gang_stats');
+        if (savedStats) {
+          try {
+            const parsed = JSON.parse(savedStats);
+            if (parsed && typeof parsed === 'object') {
+              setGangStats(parsed);
+            }
+          } catch (e) {}
+        }
+
+        const savedItems = localStorage.getItem('gang_items');
+        if (savedItems) {
+          try {
+            const parsed = JSON.parse(savedItems);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const cleanItems = parsed.filter(i => i && typeof i === 'object' && i.id && i.name);
+              if (cleanItems.length > 0) {
+                setItems(cleanItems);
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {
+        console.warn("Storage sync:", e);
+      } finally {
+        setAuthLoading(false);
+      }
+    } else {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  // 1.5. Sinkronisasi Global Real-Time (Users, Items, Kas Stats, Transaksi) lintas Admin & Member
+  useEffect(() => {
+    let isMounted = true;
+    const syncAllFromApi = async () => {
+      try {
+        const res = await fetch('/api/sync');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success) {
+            // 1. Sync Users
+            if (Array.isArray(data.users) && data.users.length > 0) {
+              setUsers(data.users);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('gang_all_users', JSON.stringify(data.users));
+                } catch (e) {}
+              }
+              // Jika user aktif mengalami perubahan saldo / role / status dari server, perbarui dbUser
+              setDbUser(prev => {
+                if (!prev) return null;
+                const fresh = data.users.find((u: any) => 
+                  (u.id && prev.id && u.id === prev.id) || 
+                  ((u.username || '').toLowerCase() === (prev.username || '').replace('@', '').toLowerCase())
+                );
+                if (fresh) {
+                  // Jika role, status, atau saldo berubah di server (misal di-promote ke admin atau didowngrade ke member)
+                  if (prev.role !== fresh.role || prev.status !== fresh.status || prev.whiteMoney !== fresh.whiteMoney) {
+                    const updatedUser = { ...prev, ...fresh };
+                    if (typeof window !== 'undefined') {
+                      try {
+                        localStorage.setItem('gang_active_user', JSON.stringify(updatedUser));
+                      } catch (e) {}
+                    }
+                    return updatedUser;
+                  }
+                }
+                return prev;
+              });
+            }
+
+            // 2. Sync Items
+            if (Array.isArray(data.items) && data.items.length > 0) {
+              setItems(data.items);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('gang_items', JSON.stringify(data.items));
+                } catch (e) {}
+              }
+            }
+
+            // 3. Sync Kas Stats
+            if (data.stats && typeof data.stats.dirtyMoney === 'number') {
+              setGangStats(data.stats);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('gang_stats', JSON.stringify(data.stats));
+                } catch (e) {}
+              }
+            }
+
+            // 4. Sync Transactions
+            if (Array.isArray(data.transactions)) {
+              setTransactions(data.transactions);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('gang_transactions', JSON.stringify(data.transactions));
+                } catch (e) {}
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Fallback jika offline
+      }
+    };
+
+    syncAllFromApi();
+    const interval = setInterval(syncAllFromApi, 1500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // 2. Firebase Auth
+  useEffect(() => {
+    let isMounted = true;
+    const initAuth = async () => {
+      try {
+        const initialToken = (globalThis as any).__initial_auth_token;
+        if (typeof initialToken !== 'undefined' && initialToken) {
+          await signInWithCustomToken(auth, initialToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        // Fallback lokal
+      }
+    };
+    initAuth();
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (!isMounted) return;
+      if (currentUser) {
+        setUser(currentUser);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeAuth();
+    };
+  }, []);
+
+  // 3. Listener Firestore Real-time
+  useEffect(() => {
+    let isMounted = true;
+
+    // Listen to users
+    const unsubUsers = onSnapshot(collection(db, USERS_PATH), (snap) => {
+      if (!isMounted) return;
+      if (!snap.empty) {
+        const usersData = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DbUser[];
+        setUsers(prev => {
+          const map = new Map<string, DbUser>();
+          INITIAL_SAMPLE_USERS.forEach(u => map.set(u.username.toLowerCase(), u));
+          prev.forEach(u => map.set(u.username.toLowerCase(), u));
+          usersData.forEach(u => map.set(u.username.toLowerCase(), u));
+          return Array.from(map.values());
+        });
+      }
+    }, (err) => console.warn("Users sync:", err));
+
+    // Listen to items
+    const unsubItems = onSnapshot(collection(db, ITEMS_PATH), (snap) => {
+      if (!isMounted) return;
+      if (!snap.empty) {
+        const firestoreItems = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Item[];
+        setItems(firestoreItems);
+      }
+    }, (err) => console.warn("Items sync:", err));
+
+    // Listen to transactions
+    const unsubTx = onSnapshot(collection(db, TX_PATH), (snap) => {
+      if (!isMounted) return;
+      if (!snap.empty) {
+        const firestoreTx = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Transaction[];
+        setTransactions(prev => {
+          const merged = deduplicateTransactions([...firestoreTx, ...prev]);
+          merged.sort((a, b) => {
+            const diff = getTxMillis(b) - getTxMillis(a);
+            if (diff !== 0) return diff;
+            return (b?.id || '').localeCompare(a?.id || '');
+          });
+          return merged;
+        });
+      }
+    }, (err) => console.warn("Tx sync:", err));
+
+    // Listen to stats
+    const unsubStats = onSnapshot(doc(db, STATS_PATH, 'main'), (docSnap) => {
+      if (!isMounted) return;
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setGangStats({ dirtyMoney: Number(data.dirtyMoney) || 85000000 });
+      }
+    }, (err) => console.warn("Stats sync:", err));
+
+    return () => {
+      isMounted = false;
+      unsubUsers();
+      unsubItems();
+      unsubTx();
+      unsubStats();
+    };
+  }, []);
+
+  // 4. Listener & Sinkronisasi Supabase Real-time (Jika Aktif)
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let isMounted = true;
+
+    const fetchAllFromSupabase = async () => {
+      try {
+        // Ambil Data Pengguna
+        const { data: suUsers } = await supabase.from('users').select('*');
+        if (isMounted && suUsers && suUsers.length > 0) {
+          const mappedUsers: DbUser[] = suUsers.map(u => ({
+            id: u.id,
+            username: u.username,
+            icName: u.ic_name || u.icName || '',
+            password: u.password,
+            role: (u.role as any) || 'member',
+            status: (u.status as any) || 'approved',
+            whiteMoney: Number(u.white_money ?? u.whiteMoney) || 0,
+            joinedAt: u.created_at
+          }));
+          setUsers(mappedUsers);
+        }
+
+        // Ambil Data Barang Brankas
+        const { data: suItems } = await supabase.from('items').select('*');
+        if (isMounted && suItems && suItems.length > 0) {
+          const mappedItems: Item[] = suItems.map(i => ({
+            id: i.id,
+            name: i.name,
+            category: i.category,
+            vault: i.vault,
+            stock: Number(i.stock) || 0,
+            inShop: Boolean(i.in_shop ?? i.inShop),
+            price: Number(i.price) || 0,
+            image: i.image
+          }));
+          setItems(mappedItems);
+        }
+
+        // Ambil Data Transaksi & Antrean ACC
+        const { data: suTx } = await supabase.from('transactions').select('*').order('created_at_ms', { ascending: false });
+        if (isMounted && suTx && suTx.length > 0) {
+          const mappedTx: Transaction[] = suTx.map(t => ({
+            id: t.id,
+            type: t.type,
+            user: t.user,
+            asset: t.asset || t.items,
+            details: t.details || t.items,
+            items: t.items,
+            amount: Number(t.amount) || 0,
+            totalPrice: Number(t.total_price ?? t.totalPrice) || 0,
+            paymentMethod: t.payment_method || t.paymentMethod,
+            status: t.status || 'pending',
+            note: t.note,
+            timestamp: t.created_at,
+            createdAtMs: Number(t.created_at_ms) || Date.now(),
+            approvedBy: t.approved_by,
+            rejectedBy: t.rejected_by
+          }));
+          setTransactions(mappedTx);
+        }
+
+        // Ambil Data Kas Faksi
+        const { data: suStats } = await supabase.from('gang_stats').select('*').eq('id', 'main').maybeSingle();
+        if (isMounted && suStats) {
+          setGangStats({ dirtyMoney: Number(suStats.dirty_money) || 0 });
+        }
+      } catch (err) {
+        console.warn("Supabase fetch warning:", err);
+      }
+    };
+
+    fetchAllFromSupabase();
+
+    // Subscribe ke Postgres Changes Realtime Supabase
+    const channel = supabase
+      .channel('golden_gang_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        fetchAllFromSupabase();
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Fungsi Login dengan Akun Alvaro (Admin), Member, & Kredensial Khusus
+  const handleLogin = async (usernameInput: string, passwordInput: string) => {
+    const cleanUser = usernameInput.trim().toLowerCase();
+    const cleanPass = passwordInput.trim();
+
+    // Verifikasi langsung ke Supabase jika aktif
+    if (isSupabaseConfigured) {
+      try {
+        const { data: suUser } = await supabase.from('users').select('*').ilike('username', cleanUser).maybeSingle();
+        if (suUser) {
+          const userObj: DbUser = {
+            id: suUser.id,
+            username: suUser.username,
+            icName: suUser.ic_name || suUser.icName || '',
+            password: suUser.password,
+            role: (suUser.role as any) || 'member',
+            status: (suUser.status as any) || 'approved',
+            whiteMoney: Number(suUser.white_money ?? suUser.whiteMoney) || 0,
+            joinedAt: suUser.created_at
+          };
+          if (userObj.password && userObj.password !== cleanPass) {
+            return { success: false, message: 'Kata sandi akun salah!' };
+          }
+          if (userObj.status === 'pending') {
+            return { 
+              success: false, 
+              message: `Akun @${userObj.username} (${userObj.icName || 'Anggota'}) masih MENUNGGU ACC / PERSETUJUAN Admin di menu Data Member!` 
+            };
+          }
+          if (userObj.status === 'rejected') {
+            return { 
+              success: false, 
+              message: `Akses akun @${userObj.username} telah DITOLAK atau DICABUT oleh Administrator sindikat.` 
+            };
+          }
+          setDbUser(userObj);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('gang_active_user', JSON.stringify(userObj));
+          }
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn("Supabase login check:", err);
+      }
+    }
+
+    // Selalu ambil status user teranyar dari server API & storage agar login instan detik itu juga setelah di-ACC
+    let latestUsers = [...users];
+    try {
+      const res = await fetch('/api/users');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.users)) {
+          latestUsers = data.users;
+          setUsers(data.users);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_all_users', JSON.stringify(data.users));
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
+    // Verifikasi User Terdaftar
+    const matched = latestUsers.find(
+      u => (u?.username || '').toLowerCase() === cleanUser && (u.password ? u.password === cleanPass : true)
+    );
+
+    if (matched) {
+      if (matched.status === 'pending') {
+        return { 
+          success: false, 
+          message: `Akun @${matched.username} (${matched.icName || 'Anggota'}) masih MENUNGGU ACC / PERSETUJUAN Admin di menu Data Member!` 
+        };
+      }
+
+      if (matched.status === 'rejected') {
+        return { 
+          success: false, 
+          message: `Akses akun @${matched.username} telah DITOLAK atau DICABUT oleh Administrator sindikat.` 
+        };
+      }
+
+      setDbUser(matched);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('gang_active_user', JSON.stringify(matched));
+      }
+      return { success: true };
+    }
+
+    return { 
+      success: false, 
+      message: 'Username atau kata sandi tidak ditemukan! Silakan daftar akun baru jika belum terdaftar.' 
+    };
+  };
+
+  const handleRegister = async (usernameInput: string, passwordInput: string, icNameInput?: string) => {
+    const cleanUser = usernameInput.trim().toLowerCase();
+    const cleanPass = passwordInput.trim();
+    const cleanIc = (icNameInput || '').trim();
+
+    if (!cleanIc) {
+      return { success: false, message: 'Harap masukkan Nama IC (In-Character Roleplay)!' };
+    }
+    if (!cleanUser || !cleanPass) {
+      return { success: false, message: 'Username dan kata sandi tidak boleh kosong!' };
+    }
+
+    if (users.some(u => (u?.username || '').toLowerCase() === cleanUser)) {
+      return { success: false, message: 'Username sudah terdaftar! Silakan gunakan username lain atau login.' };
+    }
+
+    const isFirstUser = users.length === 0;
+    const newMember: DbUser = {
+      id: `user_${Date.now()}`,
+      username: cleanUser,
+      icName: cleanIc,
+      password: cleanPass,
+      role: isFirstUser ? 'admin' : 'member',
+      status: isFirstUser ? 'approved' : 'pending',
+      whiteMoney: isFirstUser ? 25000000 : 0,
+      joinedAt: new Date().toISOString()
+    };
+
+    setUsers(prev => {
+      const updated = [...prev.filter(u => (u?.username || '').toLowerCase() !== cleanUser), newMember];
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_all_users', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    // Sinkronisasi ke Server API Lokal
+    try {
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'register', user: newMember })
+      }).catch(() => {});
+    } catch (e) {}
+
+    setDoc(doc(db, USERS_PATH, newMember.id), {
+      username: cleanUser,
+      icName: cleanIc,
+      password: cleanPass,
+      role: newMember.role,
+      status: newMember.status,
+      whiteMoney: newMember.whiteMoney,
+      joinedAt: serverTimestamp()
+    }).catch(() => {});
+
+    // Sinkronisasi ke Supabase jika aktif
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('users').upsert({
+          id: newMember.id,
+          username: cleanUser,
+          ic_name: cleanIc,
+          password: cleanPass,
+          role: newMember.role,
+          status: newMember.status,
+          white_money: newMember.whiteMoney
+        })
+      );
+    }
+
+    return { 
+      success: true, 
+      message: isFirstUser 
+        ? 'Pendaftaran akun Admin utama berhasil! Anda sekarang dapat langsung masuk ke sistem.' 
+        : 'Pendaftaran berhasil! Akun Anda telah masuk ke daftar Data Member dan sedang MENUNGGU ACC dari Admin sebelum dapat masuk ke sistem.' 
+    };
+  };
+
+  const handleLogout = async () => {
+    setDbUser(null);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('gang_active_user');
+    }
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn("Logout error:", err);
+    }
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+  };
+
+  // Helper Tambah Transaksi
+  const addTransaction = (data: NewTransactionInput): string => {
+    const newDocRef = doc(collection(db, TX_PATH));
+    const docId = newDocRef.id;
+    const now = data.createdAtMs || Date.now();
+
+    const newTx: Transaction = {
+      id: docId,
+      ...data,
+      user: data.user || (dbUser?.role === 'member' ? dbUser.username : 'member_sindikat'),
+      timestamp: new Date(now).toISOString(),
+      createdAtMs: now,
+      status: data.status || 'pending',
+      itemQty: data.itemQty ?? (data.asset === 'barang' ? (Number(data.details?.match(/\((\d+)x\)/)?.[1]) || 1) : 0)
+    };
+
+    setTransactions(prev => {
+      // Masukkan transaksi terbaru tepat di indeks 0 (paling atas)
+      const merged = [newTx, ...prev.filter(t => t.id !== docId)];
+      merged.sort((a, b) => {
+        const diff = getTxMillis(b) - getTxMillis(a);
+        if (diff !== 0) return diff;
+        return (b.id || '').localeCompare(a.id || '');
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_transactions', JSON.stringify(merged.slice(0, 100)));
+        } catch (e) {}
+      }
+      return merged;
+    });
+
+    // Sanitasi payload agar tidak ada field bernilai undefined yang ditolak oleh Firestore
+    const rawPayload = {
+      ...data,
+      user: data.user || (dbUser?.role === 'member' ? dbUser.username : 'member_sindikat'),
+      createdAtMs: now,
+      status: data.status || 'pending',
+      itemQty: data.itemQty ?? (data.asset === 'barang' ? (Number(data.details?.match(/\((\d+)x\)/)?.[1]) || 1) : 0),
+      timestamp: serverTimestamp()
+    };
+    const cleanPayload = Object.fromEntries(
+      Object.entries(rawPayload).filter(([_, v]) => v !== undefined)
+    );
+
+    setDoc(newDocRef, cleanPayload).catch((err) => console.warn("Firestore setDoc tx warning:", err));
+
+    // Sinkronisasi transaksi ke Supabase jika aktif
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('transactions').upsert({
+          id: docId,
+          type: data.type,
+          user: data.user || (dbUser?.role === 'member' ? dbUser.username : 'member_sindikat'),
+          items: data.items || data.details || '',
+          details: data.details || data.items || '',
+          amount: Number(data.amount) || 0,
+          total_price: Number(data.totalPrice) || 0,
+          payment_method: data.paymentMethod || '',
+          status: data.status || 'pending',
+          note: data.note || '',
+          created_at_ms: now
+        })
+      );
+    }
+
+    // Sinkronisasi ke server API lokal real-time
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add_transaction', transaction: newTx })
+      }).catch(() => {});
+    } catch (e) {}
+
+    return docId;
+  };
+
+  const approveTransaction = async (txId: string) => {
+    const adminName = dbUser?.username || 'admin';
+    const tx = transactions.find(t => t.id === txId);
+    if (!tx || tx.status === 'approved') return;
+
+    // 1. Eksekusi Pembelian Toko Internal
+    if (tx.type === 'SHOP_PURCHASE') {
+      if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
+        tx.itemsPayload.forEach(cartItem => {
+          const currentItem = items.find(i => i.id === cartItem.id || (i?.name || '').toLowerCase() === (cartItem?.name || '').toLowerCase());
+          if (currentItem) {
+            const newStock = Math.max(0, (Number(currentItem.stock) || 0) - (Number(cartItem.qty) || 1));
+            updateItemStock(currentItem.id, newStock);
+          }
+        });
+      }
+
+      const totalCost = Number(tx.totalPrice || tx.amount) || 0;
+      const isRed = tx.paymentMethod === 'uang_merah' || (tx.note || '').toLowerCase().includes('merah');
+      if (isRed) {
+        const curDirty = Number(gangStats?.dirtyMoney) || 0;
+        updateDirtyMoney(Math.max(0, curDirty - totalCost));
+      } else {
+        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
+        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
+        const curWhite = Number(targetAdmin?.whiteMoney ?? dbUser?.whiteMoney) || 0;
+        updateWhiteMoney(targetId, Math.max(0, curWhite - totalCost));
+      }
+    }
+
+    // 2. Eksekusi Mutasi Deposit Ledger
+    if (tx.type === 'DEPOSIT') {
+      const qty = Number(tx.amount) || 0;
+      if (tx.asset === 'uang_merah') {
+        const cur = Number(gangStats?.dirtyMoney) || 0;
+        updateDirtyMoney(cur + qty);
+      } else if (tx.asset === 'uang_putih') {
+        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
+        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
+        const cur = Number(targetAdmin?.whiteMoney) || 0;
+        updateWhiteMoney(targetId, cur + qty);
+      } else if (tx.asset === 'barang') {
+        // Ambil kuantitas unit fisik barang, BUKAN nominal harga uangnya
+        const matchQty = tx.details?.match(/\((\d+)x\)/)?.[1];
+        const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
+        const curItem = items.find(i => 
+          (tx.selectedItemId && i.id === tx.selectedItemId) || 
+          (tx.details && i.name && tx.details.toLowerCase().includes(i.name.toLowerCase()))
+        );
+        if (curItem) {
+          updateItemStock(curItem.id, (Number(curItem.stock) || 0) + physicalQty);
+        }
+      }
+    }
+
+    // 3. Eksekusi Mutasi Withdraw Ledger
+    if (tx.type === 'WITHDRAW') {
+      const qty = Number(tx.amount) || 0;
+      if (tx.asset === 'uang_merah') {
+        const cur = Number(gangStats?.dirtyMoney) || 0;
+        updateDirtyMoney(Math.max(0, cur - qty));
+      } else if (tx.asset === 'uang_putih') {
+        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
+        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
+        const cur = Number(targetAdmin?.whiteMoney) || 0;
+        updateWhiteMoney(targetId, Math.max(0, cur - qty));
+      } else if (tx.asset === 'barang') {
+        // Ambil kuantitas unit fisik barang, BUKAN nominal harga uangnya
+        const matchQty = tx.details?.match(/\((\d+)x\)/)?.[1];
+        const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
+        const curItem = items.find(i => 
+          (tx.selectedItemId && i.id === tx.selectedItemId) || 
+          (tx.details && i.name && tx.details.toLowerCase().includes(i.name.toLowerCase()))
+        );
+        if (curItem) {
+          updateItemStock(curItem.id, Math.max(0, (Number(curItem.stock) || 0) - physicalQty));
+        }
+      }
+    }
+
+    const now = Date.now();
+    // Update status transaksi ke APPROVED dan posisikan di waktu ACC terbaru
+    setTransactions(prev => {
+      const updated = prev.map(t => t.id === txId ? { 
+        ...t, 
+        status: 'approved' as const, 
+        validatedBy: adminName, 
+        validatedAt: new Date(now).toISOString(),
+        createdAtMs: now,
+        timestamp: new Date(now).toISOString()
+      } : t);
+      updated.sort((a, b) => {
+        const diff = getTxMillis(b) - getTxMillis(a);
+        if (diff !== 0) return diff;
+        return (b.id || '').localeCompare(a.id || '');
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_transactions', JSON.stringify(updated.slice(0, 100)));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    updateDoc(doc(db, TX_PATH, txId), {
+      status: 'approved',
+      validatedBy: adminName,
+      validatedAt: serverTimestamp(),
+      createdAtMs: now,
+      timestamp: serverTimestamp()
+    }).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('transactions').update({
+          status: 'approved',
+          created_at_ms: now
+        }).eq('id', txId)
+      );
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_tx_status', txId, status: 'approved', validatedBy: adminName })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const rejectTransaction = async (txId: string) => {
+    const adminName = dbUser?.username || 'admin';
+    setTransactions(prev => {
+      const updated = prev.map(t => t.id === txId ? { ...t, status: 'rejected' as const, validatedBy: adminName, validatedAt: new Date().toISOString() } : t);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_transactions', JSON.stringify(updated.slice(0, 100)));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    updateDoc(doc(db, TX_PATH, txId), {
+      status: 'rejected',
+      validatedBy: adminName,
+      validatedAt: serverTimestamp()
+    }).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('transactions').update({
+          status: 'rejected'
+        }).eq('id', txId)
+      );
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_tx_status', txId, status: 'rejected', validatedBy: adminName })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const updateItemStock = (itemId: string, newStock: number) => {
+    setItems(prev => {
+      const updated = prev.map(item => item.id === itemId ? { ...item, stock: newStock } : item);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    updateDoc(doc(db, ITEMS_PATH, itemId), { stock: newStock }).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('items').update({ stock: newStock }).eq('id', itemId));
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_item_stock', itemId, newStock })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const updateItemImage = (itemId: string, newImage: string) => {
+    setItems(prev => {
+      const updated = prev.map(item => item.id === itemId ? { ...item, image: newImage } : item);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    updateDoc(doc(db, ITEMS_PATH, itemId), { image: newImage }).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('items').update({ image: newImage }).eq('id', itemId));
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_item_image', itemId, image: newImage })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const addNewItem = async (data: Omit<Item, 'id'>): Promise<string> => {
+    const newDocRef = doc(collection(db, ITEMS_PATH));
+    const docId = newDocRef.id;
+    const newItem: Item = {
+      id: docId,
+      ...data,
+      stock: Number(data.stock) || 0,
+      price: Number(data.price) || 5000,
+      inShop: data.inShop ?? true
+    };
+
+    setItems(prev => {
+      const updated = [newItem, ...prev];
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    try {
+      await setDoc(newDocRef, newItem);
+    } catch (err) {
+      console.warn("Firestore addItem error:", err);
+    }
+
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('items').upsert({
+          id: docId,
+          name: newItem.name,
+          category: newItem.category,
+          vault: newItem.vault,
+          stock: newItem.stock,
+          in_shop: Boolean(newItem.inShop),
+          price: newItem.price,
+          image: newItem.image || ''
+        })
+      );
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add_item', item: newItem })
+      }).catch(() => {});
+    } catch (e) {}
+
+    return docId;
+  };
+
+  const editItem = async (itemId: string, updates: Partial<Item>): Promise<void> => {
+    setItems(prev => {
+      const updated = prev.map(item => item.id === itemId ? { ...item, ...updates } : item);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    try {
+      updateDoc(doc(db, ITEMS_PATH, itemId), { ...updates }).catch(() => {});
+    } catch (e) {}
+
+    if (isSupabaseConfigured) {
+      safeSupabase(
+        supabase.from('items').update({
+          ...(updates.name ? { name: updates.name } : {}),
+          ...(updates.category ? { category: updates.category } : {}),
+          ...(updates.vault ? { vault: updates.vault } : {}),
+          ...(updates.stock !== undefined ? { stock: Number(updates.stock) } : {}),
+          ...(updates.price !== undefined ? { price: Number(updates.price) } : {}),
+          ...(updates.inShop !== undefined ? { in_shop: Boolean(updates.inShop) } : {}),
+          ...(updates.image !== undefined ? { image: updates.image } : {})
+        }).eq('id', itemId)
+      );
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'edit_item', itemId, updates })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const deleteItem = async (itemId: string): Promise<void> => {
+    setItems(prev => {
+      const updated = prev.filter(item => item.id !== itemId);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    try {
+      deleteDoc(doc(db, ITEMS_PATH, itemId)).catch(() => {});
+    } catch (e) {}
+
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('items').delete().eq('id', itemId));
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_item', itemId })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const updateShopSettings = async (shopData: Record<string, { inShop: boolean; price: number }>) => {
+    setItems(prev => {
+      const updated = prev.map(item => {
+        if (shopData[item.id]) {
+          return {
+            ...item,
+            inShop: Boolean(shopData[item.id].inShop),
+            price: Number(shopData[item.id].price) || 0
+          };
+        }
+        return item;
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_items', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    for (const itemId of Object.keys(shopData)) {
+      const updates = shopData[itemId];
+      updateDoc(doc(db, ITEMS_PATH, itemId), {
+        inShop: Boolean(updates.inShop),
+        price: Number(updates.price) || 0
+      }).catch(() => {});
+      if (isSupabaseConfigured) {
+        safeSupabase(
+          supabase.from('items').update({
+            in_shop: Boolean(updates.inShop),
+            price: Number(updates.price) || 0
+          }).eq('id', itemId)
+        );
+      }
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_shop', shopData })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const updateUserStatus = async (userId: string, status: 'approved' | 'rejected') => {
+    setUsers(prev => {
+      const updated = prev.map(u => (u.id === userId || (u.username && u.username.toLowerCase() === String(userId).toLowerCase())) ? { ...u, status } : u);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_all_users', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    if (dbUser?.id === userId || (dbUser?.username && dbUser.username.toLowerCase() === String(userId).toLowerCase())) {
+      setDbUser(prev => prev ? ({ ...prev, status }) : null);
+    }
+
+    // 1. Eksekusi lokal sync backend terlebih dahulu secara instan
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_status', userId, status })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.users)) {
+          setUsers(data.users);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_all_users', JSON.stringify(data.users));
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
+    try {
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_status', userId, status })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 2. Background Firestore & Supabase (non-blocking)
+    updateDoc(doc(db, USERS_PATH, userId), { status }).catch(() => {});
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('users').update({ status }).eq('id', userId));
+    }
+  };
+
+  const updateUserRole = async (userId: string, role: string) => {
+    setUsers(prev => {
+      const updated = prev.map(u => (u.id === userId || (u.username && u.username.toLowerCase() === String(userId).toLowerCase())) ? { ...u, role: role as 'admin' | 'member' } : u);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_all_users', JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    if (dbUser?.id === userId || (dbUser?.username && dbUser.username.toLowerCase() === String(userId).toLowerCase())) {
+      const updatedSelf = { ...dbUser, role: role as 'admin' | 'member' };
+      setDbUser(updatedSelf);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('gang_active_user', JSON.stringify(updatedSelf));
+      }
+    }
+
+    // 1. Eksekusi lokal sync backend terlebih dahulu secara instan
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_role', userId, role })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.users)) {
+          setUsers(data.users);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('gang_all_users', JSON.stringify(data.users));
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
+    try {
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_role', userId, role })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 2. Background Firestore & Supabase (non-blocking)
+    updateDoc(doc(db, USERS_PATH, userId), { role }).catch(() => {});
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('users').update({ role }).eq('id', userId));
+    }
+  };
+
+  const updateDirtyMoney = (newTotal: number) => {
+    setGangStats({ dirtyMoney: newTotal });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gang_stats', JSON.stringify({ dirtyMoney: newTotal }));
+      } catch (e) {}
+    }
+    updateDoc(doc(db, STATS_PATH, 'main'), { dirtyMoney: newTotal }).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      safeSupabase(supabase.from('gang_stats').upsert({ id: 'main', dirty_money: newTotal }));
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_dirty_money', dirtyMoney: newTotal })
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  const updateWhiteMoney = (userId: string, newTotal: number) => {
+    if (dbUser?.id === userId || !userId) {
+      setDbUser(prev => prev ? ({ ...prev, whiteMoney: newTotal }) : null);
+      if (typeof window !== 'undefined') {
+        try {
+          const current = localStorage.getItem('gang_active_user');
+          if (current) {
+            const parsed = JSON.parse(current);
+            parsed.whiteMoney = newTotal;
+            localStorage.setItem('gang_active_user', JSON.stringify(parsed));
+          }
+        } catch (e) {}
+      }
+    }
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, whiteMoney: newTotal } : u));
+    if (userId) {
+      updateDoc(doc(db, USERS_PATH, userId), { whiteMoney: newTotal }).catch(() => {});
+
+      if (isSupabaseConfigured) {
+        safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('id', userId));
+      }
+
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_white_money', userId, whiteMoney: newTotal })
+        }).catch(() => {});
+      } catch (e) {}
+    }
+  };
+
+  const activeUser = users.find(u => 
+    (u.username && dbUser?.username && u.username.toLowerCase() === dbUser.username.replace('@', '').toLowerCase()) ||
+    (u.id && dbUser?.id && u.id === dbUser.id)
+  ) || dbUser;
+
+  const currentRole = activeUser?.role || dbUser?.role || 'member';
+  const currentStatus = activeUser?.status || dbUser?.status || 'approved';
+  const isAdmin = currentRole === 'admin' && currentStatus === 'approved';
+  const effectiveDbUser = dbUser ? { 
+    ...dbUser, 
+    role: currentRole, 
+    status: currentStatus, 
+    whiteMoney: activeUser?.whiteMoney ?? dbUser.whiteMoney 
+  } : null;
+
+  const admins = users.filter(u => u.role === 'admin' && u.status === 'approved');
+  if (admins.length === 0 && effectiveDbUser?.role === 'admin') admins.push(effectiveDbUser);
+
+  return (
+    <GangContext.Provider
+      value={{
+        user,
+        dbUser: effectiveDbUser,
+        authLoading,
+        users: users.length > 0 ? users : [DEFAULT_ADMIN_ACCOUNT],
+        admins: admins.length > 0 ? admins : [DEFAULT_ADMIN_ACCOUNT],
+        isAdmin: !!isAdmin,
+        items,
+        transactions,
+        gangStats,
+        handleLogin,
+        handleRegister,
+        handleLogout,
+        addTransaction,
+        approveTransaction,
+        rejectTransaction,
+        updateItemStock,
+        updateItemImage,
+        addNewItem,
+        editItem,
+        deleteItem,
+        updateShopSettings,
+        updateUserStatus,
+        updateUserRole,
+        updateDirtyMoney,
+        updateWhiteMoney
+      }}
+    >
+      {children}
+    </GangContext.Provider>
+  );
+}
+
+export function useGang() {
+  const context = useContext(GangContext);
+  if (!context) {
+    throw new Error('useGang must be used within a GangProvider');
+  }
+  return context;
+}
