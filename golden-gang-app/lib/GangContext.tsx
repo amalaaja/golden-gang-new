@@ -131,7 +131,7 @@ export const DEFAULT_MEMBER_ACCOUNT: DbUser = {
   password: '112233',
   role: 'member',
   status: 'approved',
-  whiteMoney: 5000000,
+  whiteMoney: 0,
 };
 
 export const INITIAL_SAMPLE_USERS: DbUser[] = [];
