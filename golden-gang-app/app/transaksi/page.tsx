@@ -29,13 +29,20 @@ export default function TransaksiPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ type: '', text: '' });
 
-  // Daftar rekening yang dapat ditransaksikan (Member dapat memilih rekeningnya sendiri / admin, Admin dapat memilih semua akun)
+  // Daftar rekening yang dapat ditransaksikan (Akun sendiri selalu berada di paling atas)
   const eligibleAccounts = React.useMemo(() => {
     if (!dbUser) return [];
-    if (isAdmin) {
-      return (users || []).filter(u => u && u.id && u.status === 'approved');
-    }
     const myAcc = (users || []).find(u => u.id === dbUser.id || (u.username || '').toLowerCase() === (dbUser.username || '').toLowerCase()) || dbUser;
+    
+    if (isAdmin) {
+      const otherAccounts = (users || []).filter(u => 
+        u && u.id && u.status === 'approved' && 
+        u.id !== myAcc.id && 
+        (u.username || '').toLowerCase() !== (myAcc.username || '').toLowerCase()
+      );
+      return [myAcc, ...otherAccounts];
+    }
+    
     const list = [myAcc];
     (admins || []).forEach(a => {
       if (a && a.id !== myAcc.id && !list.some(x => x.id === a.id)) {
@@ -89,9 +96,9 @@ export default function TransaksiPage() {
 
         // Eksekusi mutasi stok barang seketika (Deposit = Tambah, Withdraw = Kurang)
         if (txType === 'deposit') {
-          updateItemStock(item.id, currentStock + qty);
+          await updateItemStock(item.id, currentStock + qty);
         } else {
-          updateItemStock(item.id, Math.max(0, currentStock - qty));
+          await updateItemStock(item.id, Math.max(0, currentStock - qty));
         }
       } 
       else if (assetType === 'uang_merah') {
@@ -105,9 +112,9 @@ export default function TransaksiPage() {
 
         // Eksekusi mutasi kas uang merah seketika
         if (txType === 'deposit') {
-          updateDirtyMoney(currentDirty + qty);
+          await updateDirtyMoney(currentDirty + qty);
         } else {
-          updateDirtyMoney(Math.max(0, currentDirty - qty));
+          await updateDirtyMoney(Math.max(0, currentDirty - qty));
         }
       }
       else if (assetType === 'uang_putih') {
@@ -122,9 +129,9 @@ export default function TransaksiPage() {
 
         // Eksekusi mutasi saldo rekening uang putih seketika
         if (txType === 'deposit') {
-          updateWhiteMoney(targetAccount.id, currentBal + qty);
+          await updateWhiteMoney(targetAccount.id, currentBal + qty);
         } else {
-          updateWhiteMoney(targetAccount.id, Math.max(0, currentBal - qty));
+          await updateWhiteMoney(targetAccount.id, Math.max(0, currentBal - qty));
         }
       }
 
