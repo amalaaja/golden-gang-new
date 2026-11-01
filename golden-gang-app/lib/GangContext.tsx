@@ -1479,7 +1479,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 2. Background Firestore & Supabase (non-blocking)
     updateDoc(doc(db, USERS_PATH, userId), { status }).catch(() => {});
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('users').update({ status }).or(`id.eq.${userId},username.ilike.${userId}`));
+      safeSupabase(supabase.from('users').update({ status }).eq('id', userId));
+      safeSupabase(supabase.from('users').update({ status }).eq('username', userId));
     }
   };
 
@@ -1533,7 +1534,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 2. Background Firestore & Supabase (non-blocking)
     updateDoc(doc(db, USERS_PATH, userId), { role }).catch(() => {});
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('users').update({ role }).or(`id.eq.${userId},username.ilike.${userId}`));
+      safeSupabase(supabase.from('users').update({ role }).eq('id', userId));
+      safeSupabase(supabase.from('users').update({ role }).eq('username', userId));
     }
   };
 
@@ -1593,12 +1595,10 @@ export function GangProvider({ children }: { children: ReactNode }) {
       updateDoc(doc(db, USERS_PATH, actualId), { whiteMoney: newTotal }).catch(() => {});
 
       if (isSupabaseConfigured) {
-        safeSupabase(
-          supabase
-            .from('users')
-            .update({ white_money: newTotal })
-            .or(`id.eq.${actualId},username.ilike.${actualUsername}`)
-        );
+        safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('id', actualId));
+        if (actualUsername) {
+          safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('username', actualUsername));
+        }
       }
 
       try {
