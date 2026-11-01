@@ -99,7 +99,7 @@ interface GangContextType {
   addTransaction: (data: NewTransactionInput) => string;
   approveTransaction: (txId: string) => Promise<void>;
   rejectTransaction: (txId: string) => Promise<void>;
-  updateItemStock: (itemId: string, newStock: number) => void;
+  updateItemStock: (itemId: string, newStock: number) => Promise<void>;
   updateItemImage: (itemId: string, newImage: string) => void;
   addNewItem: (data: Omit<Item, 'id'>) => Promise<string>;
   editItem: (itemId: string, updates: Partial<Item>) => Promise<void>;
@@ -107,8 +107,8 @@ interface GangContextType {
   updateShopSettings: (shopData: Record<string, { inShop: boolean; price: number }>) => Promise<void>;
   updateUserStatus: (userId: string, status: 'approved' | 'rejected') => Promise<void>;
   updateUserRole: (userId: string, role: string) => Promise<void>;
-  updateDirtyMoney: (newTotal: number) => void;
-  updateWhiteMoney: (userId: string, newTotal: number) => void;
+  updateDirtyMoney: (newTotal: number) => Promise<void>;
+  updateWhiteMoney: (userId: string, newTotal: number) => Promise<void>;
   handleJoinGang?: (username: string) => Promise<void>;
 }
 
@@ -1199,8 +1199,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
     } catch (e) {}
   };
 
-  const updateItemStock = (itemId: string, newStock: number) => {
-    const updatedStock = Math.max(0, Number(newStock) || 0);
+  const updateItemStock = async (itemId: string, newStock: number) => {
+    const updatedStock = Math.max(0, Math.round(Number(newStock) || 0));
     const targetItem = items.find(i => i.id === itemId);
 
     setItems(prev => {
@@ -1216,9 +1216,9 @@ export function GangProvider({ children }: { children: ReactNode }) {
     updateDoc(doc(db, ITEMS_PATH, itemId), { stock: updatedStock }).catch(() => {});
 
     if (isSupabaseConfigured) {
-      if (targetItem) {
-        safeSupabase(
-          supabase.from('items').upsert({
+      try {
+        if (targetItem) {
+          await supabase.from('items').upsert({
             id: itemId,
             name: targetItem.name,
             category: targetItem.category || 'ITEM',
@@ -1227,19 +1227,21 @@ export function GangProvider({ children }: { children: ReactNode }) {
             in_shop: Boolean(targetItem.inShop),
             price: Number(targetItem.price) || 0,
             image: targetItem.image || ''
-          })
-        );
-      } else {
-        safeSupabase(supabase.from('items').update({ stock: updatedStock }).eq('id', itemId));
+          });
+        } else {
+          await supabase.from('items').update({ stock: updatedStock }).eq('id', itemId);
+        }
+      } catch (err) {
+        console.warn("Supabase updateItemStock err:", err);
       }
     }
 
     try {
-      fetch('/api/sync', {
+      await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'update_item_stock', itemId, newStock: updatedStock })
-      }).catch(() => {});
+      });
     } catch (e) {}
   };
 
@@ -1539,30 +1541,37 @@ export function GangProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateDirtyMoney = (newTotal: number) => {
-    setGangStats({ dirtyMoney: newTotal });
+  const updateDirtyMoney = async (newTotal: number) => {
+    const finalAmount = Math.max(0, Math.round(Number(newTotal) || 0));
+    setGangStats({ dirtyMoney: finalAmount });
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('gang_stats', JSON.stringify({ dirtyMoney: newTotal }));
+        localStorage.setItem('gang_stats', JSON.stringify({ dirtyMoney: finalAmount }));
       } catch (e) {}
     }
-    updateDoc(doc(db, STATS_PATH, 'main'), { dirtyMoney: newTotal }).catch(() => {});
+    updateDoc(doc(db, STATS_PATH, 'main'), { dirtyMoney: finalAmount }).catch(() => {});
 
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('gang_stats').upsert({ id: 'main', dirty_money: newTotal }));
+      try {
+        await supabase.from('gang_stats').upsert({ id: 'main', dirty_money: finalAmount });
+      } catch (err) {
+        console.warn("Supabase updateDirtyMoney err:", err);
+      }
     }
 
     try {
-      fetch('/api/sync', {
+      await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_dirty_money', dirtyMoney: newTotal })
-      }).catch(() => {});
+        body: JSON.stringify({ action: 'update_dirty_money', dirtyMoney: finalAmount })
+      });
     } catch (e) {}
   };
 
-  const updateWhiteMoney = (userId: string, newTotal: number) => {
+  const updateWhiteMoney = async (userId: string, newTotal: number) => {
     const cleanId = (userId || '').trim();
+    const finalAmount = Math.max(0, Math.round(Number(newTotal) || 0));
+
     const targetUser = users.find(u => 
       (u.id && u.id === cleanId) || 
       (u.username && u.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase())
@@ -1572,13 +1581,13 @@ export function GangProvider({ children }: { children: ReactNode }) {
     const actualUsername = (targetUser?.username || cleanId).replace('@', '');
 
     if (dbUser && (dbUser.id === actualId || dbUser.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) {
-      setDbUser(prev => prev ? ({ ...prev, whiteMoney: newTotal }) : null);
+      setDbUser(prev => prev ? ({ ...prev, whiteMoney: finalAmount }) : null);
       if (typeof window !== 'undefined') {
         try {
           const current = localStorage.getItem('gang_active_user');
           if (current) {
             const parsed = JSON.parse(current);
-            parsed.whiteMoney = newTotal;
+            parsed.whiteMoney = finalAmount;
             localStorage.setItem('gang_active_user', JSON.stringify(parsed));
           }
         } catch (e) {}
@@ -1587,26 +1596,32 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     setUsers(prev => prev.map(u => 
       (u.id === actualId || (u.username && u.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) 
-        ? { ...u, whiteMoney: newTotal } 
+        ? { ...u, whiteMoney: finalAmount } 
         : u
     ));
 
     if (actualId) {
-      updateDoc(doc(db, USERS_PATH, actualId), { whiteMoney: newTotal }).catch(() => {});
+      updateDoc(doc(db, USERS_PATH, actualId), { whiteMoney: finalAmount }).catch(() => {});
 
       if (isSupabaseConfigured) {
-        safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('id', actualId));
-        if (actualUsername) {
-          safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('username', actualUsername));
+        try {
+          if (actualId) {
+            await supabase.from('users').update({ white_money: finalAmount }).eq('id', actualId);
+          }
+          if (actualUsername) {
+            await supabase.from('users').update({ white_money: finalAmount }).ilike('username', actualUsername);
+          }
+        } catch (err) {
+          console.warn("Supabase updateWhiteMoney err:", err);
         }
       }
 
       try {
-        fetch('/api/sync', {
+        await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update_white_money', userId: actualId, whiteMoney: newTotal })
-        }).catch(() => {});
+          body: JSON.stringify({ action: 'update_white_money', userId: actualId, whiteMoney: finalAmount })
+        });
       } catch (e) {}
     }
   };
