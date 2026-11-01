@@ -42,10 +42,20 @@ export default function LoginPage() {
       if (handleRegister) {
         const res = await handleRegister(username, password, icName);
         if (res.success) {
-          setSuccessMsg(res.message || 'Pendaftaran berhasil! Akun Anda sedang menunggu persetujuan (ACC) dari Admin sindikat.');
-          setIsRegister(false);
-          setIcName('');
-          setPassword('');
+          if (res.isPending) {
+            // Member baru WAJIB MENUNGGU ACC ADMIN: JANGAN langsung masuk ke beranda!
+            setSuccessMsg(res.message || 'Pendaftaran berhasil! Akun Anda sedang MENUNGGU ACC dari Admin di menu Data Member.');
+            setIsRegister(false); // Otomatis pindahkan ke tab Masuk Sistem
+            setPassword('');      // Kosongkan password agar tidak terkirim ulang
+          } else {
+            // Khusus admin utama (alvaro) langsung masuk
+            setSuccessMsg(res.message || 'Pendaftaran berhasil!');
+            setTimeout(() => {
+              if (typeof window !== 'undefined') {
+                window.location.href = '/';
+              }
+            }, 300);
+          }
         } else {
           setErrorMsg(res.message || 'Gagal mendaftar akun!');
         }
