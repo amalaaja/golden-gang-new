@@ -21,9 +21,10 @@ import { formatMoney } from '@/lib/firebase';
 import ChangeImageModal from '@/app/components/ChangeImageModal';
 
 export default function DashboardPage() {
-  const { items, gangStats } = useGang();
+  const { items, gangStats, users } = useGang();
   const [filter, setFilter] = useState('SEMUA');
   const [search, setSearch] = useState('');
+  const [showAdminVaults, setShowAdminVaults] = useState(false);
   const [selectedItemForImage, setSelectedItemForImage] = useState<Item | null>(null);
 
   const filteredItems = items.filter(item => {
@@ -31,6 +32,10 @@ export default function DashboardPage() {
     const matchSearch = (item.name || '').toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+
+  const totalWhiteMoney = (users || [])
+    .filter(u => u && u.status === 'approved')
+    .reduce((sum, u) => sum + (Number(u.whiteMoney) || 0), 0);
 
   return (
     <div className="space-y-4 sm:space-y-5 animate-in fade-in duration-300">
@@ -46,7 +51,7 @@ export default function DashboardPage() {
             </h1>
           </div>
           <p className="text-gray-400 text-xs mt-0.5">
-            Ringkasan likuiditas keuangan faksi sindikat dan seluruh brankas aset.
+            Ringkasan likuiditas keuangan gelap, rekening legal, dan seluruh brankas aset sindikat.
           </p>
         </div>
 
@@ -58,8 +63,8 @@ export default function DashboardPage() {
         </Link>
       </div>
       
-      {/* Finance Stats Grid (Kas Uang Merah Operasional) */}
-      <div className="grid grid-cols-1 gap-4">
+      {/* Finance Stats Grid (Uang Merah & Uang Putih) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Dirty Money Card */}
         <div className="glass-red p-4 sm:p-5 rounded-2xl relative overflow-hidden group">
           <div className="absolute top-[-20%] right-[-10%] w-36 h-36 bg-rose-600/15 rounded-full blur-2xl pointer-events-none"></div>
@@ -77,6 +82,55 @@ export default function DashboardPage() {
             <p className="text-[11px] text-gray-400 mt-4 flex items-center gap-1.5">
               <AlertCircle size={13} className="text-rose-400/80 shrink-0" /> Total kas operasional brankas faksi sindikat
             </p>
+          </div>
+        </div>
+
+        {/* White Money Card */}
+        <div className="glass-gold p-4 sm:p-5 rounded-2xl relative overflow-hidden group">
+          <div className="absolute top-[-20%] right-[-10%] w-36 h-36 bg-amber-500/15 rounded-full blur-2xl pointer-events-none"></div>
+          <div className="relative z-10">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  <p className="text-amber-400/90 text-[10px] font-bold tracking-widest uppercase">
+                    Uang Putih (Legal Funds)
+                  </p>
+                </div>
+                <h3 className="text-2xl sm:text-3xl font-mono-tech font-extrabold text-white text-gold-shimmer tracking-tight">
+                  {formatMoney(totalWhiteMoney)}
+                </h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowAdminVaults(!showAdminVaults)} 
+                className="bg-[#050608] hover:bg-black border border-white/10 hover:border-amber-500/40 text-gray-300 hover:text-white flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all shadow-sm shrink-0"
+              >
+                Rekening <ChevronDown size={12} className={`transform transition-transform duration-300 ${showAdminVaults ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+            
+            {showAdminVaults && (
+              <div className="mt-4 pt-3 border-t border-white/10 space-y-2 animate-in slide-in-from-top-2 duration-300 relative z-10 max-h-48 overflow-y-auto custom-scrollbar">
+                {(users || []).filter(u => u && u.status === 'approved').map(acc => (
+                  <div key={acc.id} className="flex justify-between items-center bg-[#07090C] p-2.5 rounded-xl border border-white/5 hover:border-amber-500/30 transition-colors">
+                    <span className="text-gray-300 text-xs font-bold">
+                      Rekening <span className="text-amber-400">@{acc.username}</span>
+                      <span className="text-[9.5px] text-gray-500 ml-1.5 font-normal uppercase">
+                        ({acc.role === 'admin' ? 'ADMIN' : 'MEMBER'})
+                      </span>
+                    </span>
+                    <span className="text-white font-mono-tech font-bold text-xs">{formatMoney(acc.whiteMoney)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {!showAdminVaults && (
+              <p className="text-[11px] text-gray-400 mt-4 flex items-center gap-1.5 relative z-10">
+                <Landmark size={13} className="text-amber-400/80 shrink-0" /> Total dana legal di seluruh rekening sindikat
+              </p>
+            )}
           </div>
         </div>
       </div>
