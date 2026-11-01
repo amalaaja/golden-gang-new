@@ -543,23 +543,36 @@ export function GangProvider({ children }: { children: ReactNode }) {
           console.warn("Supabase tx fetch error:", txError);
         }
         if (isMounted && suTx && Array.isArray(suTx)) {
-          const mappedTx: Transaction[] = suTx.map(t => ({
-            id: t.id,
-            type: t.type,
-            user: t.user,
-            asset: t.asset || t.items,
-            details: t.details || t.items,
-            items: t.items,
-            amount: Number(t.amount) || 0,
-            totalPrice: Number(t.total_price ?? t.totalPrice ?? t.amount) || 0,
-            paymentMethod: t.payment_method || t.paymentMethod || 'uang_putih',
-            status: ((t.status || 'pending').toLowerCase()) as any,
-            note: t.note || '',
-            timestamp: t.created_at || new Date().toISOString(),
-            createdAtMs: Number(t.created_at_ms) || (t.created_at ? new Date(t.created_at).getTime() : Date.now()),
-            approvedBy: t.approved_by,
-            rejectedBy: t.rejected_by
-          }));
+          const mappedTx: Transaction[] = suTx.map(t => {
+            let detectedAsset = t.asset;
+            if (!detectedAsset || detectedAsset.includes('(')) {
+              if (t.type === 'SHOP_PURCHASE' || (t.details && t.details.match(/\(\d+x\)/)) || (t.items && t.items.match(/\(\d+x\)/))) {
+                detectedAsset = 'barang';
+              } else if ((t.payment_method || '').toLowerCase() === 'uang_merah' || (t.details || '').toLowerCase().includes('uang merah')) {
+                detectedAsset = 'uang_merah';
+              } else {
+                detectedAsset = 'uang_putih';
+              }
+            }
+
+            return {
+              id: t.id,
+              type: t.type,
+              user: t.user,
+              asset: detectedAsset,
+              details: t.details || t.items,
+              items: t.items,
+              amount: Number(t.amount) || 0,
+              totalPrice: Number(t.total_price ?? t.totalPrice ?? t.amount) || 0,
+              paymentMethod: t.payment_method || t.paymentMethod || 'uang_putih',
+              status: ((t.status || 'pending').toLowerCase()) as any,
+              note: t.note || '',
+              timestamp: t.created_at || new Date().toISOString(),
+              createdAtMs: Number(t.created_at_ms) || (t.created_at ? new Date(t.created_at).getTime() : Date.now()),
+              approvedBy: t.approved_by,
+              rejectedBy: t.rejected_by
+            };
+          });
 
           // Urutkan transaksi dari yang paling baru
           mappedTx.sort((a, b) => {
@@ -884,6 +897,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
           id: docId,
           type: data.type,
           user: data.user || (dbUser?.role === 'member' ? dbUser.username : 'member_sindikat'),
+          asset: data.asset || (data.type === 'SHOP_PURCHASE' ? 'barang' : 'uang_putih'),
           items: data.items || data.details || '',
           details: data.details || data.items || '',
           amount: Number(data.amount) || 0,
@@ -987,27 +1001,66 @@ export function GangProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Helper untuk mendeteksi tipe aset transaksi (robust & fallback-ready)
+    const isItemTx = 
+      tx.asset === 'barang' || 
+      Boolean((tx.details || tx.items || '').match(/\(\d+x\)/)) || 
+      items.some(i => i.name && (
+        (tx.details && tx.details.toLowerCase().includes(i.name.toLowerCase())) || 
+        (typeof tx.items === 'string' && tx.items.toLowerCase().includes(i.name.toLowerCase()))
+      ));
+
+    const isRedTx = 
+      !isItemTx && (
+        tx.asset === 'uang_merah' || 
+        tx.paymentMethod === 'uang_merah' || 
+        (tx.details || '').toLowerCase().includes('uang merah') || 
+        (tx.note || '').toLowerCase().includes('uang merah')
+      );
+
     // 2. Eksekusi Mutasi Deposit Ledger
     if (tx.type === 'DEPOSIT') {
       const qty = Number(tx.amount) || 0;
-      if (tx.asset === 'uang_merah') {
+
+      if (isRedTx) {
+        // Setor Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
         updateDirtyMoney(cur + qty);
-      } else if (tx.asset === 'uang_putih') {
-        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
-        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
-        const cur = Number(targetAdmin?.whiteMoney) || 0;
-        updateWhiteMoney(targetId, cur + qty);
-      } else if (tx.asset === 'barang') {
-        // Ambil kuantitas unit fisik barang, BUKAN nominal harga uangnya
-        const matchQty = tx.details?.match(/\((\d+)x\)/)?.[1];
+      } else if (isItemTx) {
+        // Setor Barang ke Brankas: Stok bertambah!
+        const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
         const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
+        const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
+
         const curItem = items.find(i => 
           (tx.selectedItemId && i.id === tx.selectedItemId) || 
-          (tx.details && i.name && tx.details.toLowerCase().includes(i.name.toLowerCase()))
+          (i.name && rawName.includes(i.name.toLowerCase())) ||
+          (i.name && i.name.toLowerCase().includes(rawName))
         );
+
         if (curItem) {
-          updateItemStock(curItem.id, (Number(curItem.stock) || 0) + physicalQty);
+          const newStock = (Number(curItem.stock) || 0) + physicalQty;
+          updateItemStock(curItem.id, newStock);
+        }
+      } else {
+        // Setor Uang Putih: Rekening tujuan bertambah!
+        let targetUser = users.find(u => 
+          (tx.targetAdminId && u.id === tx.targetAdminId) ||
+          (tx.user && u.username.toLowerCase() === tx.user.toLowerCase())
+        );
+        if (!targetUser) {
+          const rekMatch = (tx.details || tx.note || '').match(/Rek:\s*@?(\w+)/i)?.[1];
+          if (rekMatch) {
+            targetUser = users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
+          }
+        }
+        if (!targetUser) {
+          targetUser = admins.find(a => a.id === tx.targetAdminId) || admins[0] || dbUser;
+        }
+
+        if (targetUser) {
+          const cur = Number(targetUser.whiteMoney) || 0;
+          updateWhiteMoney(targetUser.id, cur + qty);
         }
       }
     }
@@ -1015,24 +1068,46 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 3. Eksekusi Mutasi Withdraw Ledger
     if (tx.type === 'WITHDRAW') {
       const qty = Number(tx.amount) || 0;
-      if (tx.asset === 'uang_merah') {
+
+      if (isRedTx) {
+        // Tarik Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
         updateDirtyMoney(Math.max(0, cur - qty));
-      } else if (tx.asset === 'uang_putih') {
-        const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
-        const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
-        const cur = Number(targetAdmin?.whiteMoney) || 0;
-        updateWhiteMoney(targetId, Math.max(0, cur - qty));
-      } else if (tx.asset === 'barang') {
-        // Ambil kuantitas unit fisik barang, BUKAN nominal harga uangnya
-        const matchQty = tx.details?.match(/\((\d+)x\)/)?.[1];
+      } else if (isItemTx) {
+        // Tarik Barang dari Brankas: Stok berkurang!
+        const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
         const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
+        const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
+
         const curItem = items.find(i => 
           (tx.selectedItemId && i.id === tx.selectedItemId) || 
-          (tx.details && i.name && tx.details.toLowerCase().includes(i.name.toLowerCase()))
+          (i.name && rawName.includes(i.name.toLowerCase())) ||
+          (i.name && i.name.toLowerCase().includes(rawName))
         );
+
         if (curItem) {
-          updateItemStock(curItem.id, Math.max(0, (Number(curItem.stock) || 0) - physicalQty));
+          const newStock = Math.max(0, (Number(curItem.stock) || 0) - physicalQty);
+          updateItemStock(curItem.id, newStock);
+        }
+      } else {
+        // Tarik Uang Putih: Rekening berkurang!
+        let targetUser = users.find(u => 
+          (tx.targetAdminId && u.id === tx.targetAdminId) ||
+          (tx.user && u.username.toLowerCase() === tx.user.toLowerCase())
+        );
+        if (!targetUser) {
+          const rekMatch = (tx.details || tx.note || '').match(/Rek:\s*@?(\w+)/i)?.[1];
+          if (rekMatch) {
+            targetUser = users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
+          }
+        }
+        if (!targetUser) {
+          targetUser = admins.find(a => a.id === tx.targetAdminId) || admins[0] || dbUser;
+        }
+
+        if (targetUser) {
+          const cur = Number(targetUser.whiteMoney) || 0;
+          updateWhiteMoney(targetUser.id, Math.max(0, cur - qty));
         }
       }
     }
