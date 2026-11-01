@@ -139,9 +139,11 @@ export default function TransaksiPage() {
         amount: totalVal,
         totalPrice: totalVal,
         paymentMethod: paymentMethod,
-        note: note || (assetType === 'barang' 
-          ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
-          : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`)),
+        note: assetType === 'uang_putih'
+          ? (note ? `${note} (Rek: @${targetAdmin?.username || 'admin'})` : `Rek: @${targetAdmin?.username || 'admin'}`)
+          : (note || (assetType === 'barang' 
+              ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
+              : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`))),
         createdAtMs: Date.now(),
         status: isPendingApproval ? 'pending' : 'approved',
         selectedItemId: selectedItemId || items[0]?.id,
