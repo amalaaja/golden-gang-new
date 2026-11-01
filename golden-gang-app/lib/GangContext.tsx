@@ -1020,7 +1020,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     // 2. Eksekusi Mutasi Deposit Ledger
     if (tx.type === 'DEPOSIT') {
-      const qty = Number(tx.amount) || 0;
+      const qty = Number(tx.amount || tx.totalPrice) || 0;
 
       if (isRedTx) {
         // Setor Kas Uang Merah
@@ -1044,18 +1044,22 @@ export function GangProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Setor Uang Putih: Rekening Kas Admin yang dipilih BERTAMBAH!
-        const rekAdminMatch = (tx.details || tx.note || '').match(/@(\w+)/)?.[1];
+        const combinedText = `${tx.details || ''} ${tx.note || ''}`;
+        const rekAdminMatch = combinedText.match(/@(\w+)/)?.[1];
+        
         let targetAdmin = rekAdminMatch 
-          ? (admins.find(a => (a.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase()) ||
-             users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() && u.role === 'admin'))
+          ? users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase())
           : null;
 
         if (!targetAdmin && tx.targetAdminId) {
-          targetAdmin = admins.find(a => a.id === tx.targetAdminId) || users.find(u => u.id === tx.targetAdminId && u.role === 'admin');
+          targetAdmin = users.find(u => 
+            u.id === tx.targetAdminId || 
+            (u.username || '').replace('@', '').toLowerCase() === String(tx.targetAdminId).replace('@', '').toLowerCase()
+          );
         }
 
         if (!targetAdmin) {
-          targetAdmin = admins[0] || dbUser;
+          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
         }
 
         if (targetAdmin) {
@@ -1067,7 +1071,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     // 3. Eksekusi Mutasi Withdraw Ledger
     if (tx.type === 'WITHDRAW') {
-      const qty = Number(tx.amount) || 0;
+      const qty = Number(tx.amount || tx.totalPrice) || 0;
 
       if (isRedTx) {
         // Tarik Kas Uang Merah
@@ -1091,18 +1095,22 @@ export function GangProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Tarik Uang Putih: Rekening Kas Admin yang dipilih BERKURANG!
-        const rekAdminMatch = (tx.details || tx.note || '').match(/@(\w+)/)?.[1];
+        const combinedText = `${tx.details || ''} ${tx.note || ''}`;
+        const rekAdminMatch = combinedText.match(/@(\w+)/)?.[1];
+        
         let targetAdmin = rekAdminMatch 
-          ? (admins.find(a => (a.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase()) ||
-             users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() && u.role === 'admin'))
+          ? users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase())
           : null;
 
         if (!targetAdmin && tx.targetAdminId) {
-          targetAdmin = admins.find(a => a.id === tx.targetAdminId) || users.find(u => u.id === tx.targetAdminId && u.role === 'admin');
+          targetAdmin = users.find(u => 
+            u.id === tx.targetAdminId || 
+            (u.username || '').replace('@', '').toLowerCase() === String(tx.targetAdminId).replace('@', '').toLowerCase()
+          );
         }
 
         if (!targetAdmin) {
-          targetAdmin = admins[0] || dbUser;
+          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
         }
 
         if (targetAdmin) {
@@ -1609,6 +1617,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
           }
           if (actualUsername) {
             await supabase.from('users').update({ white_money: finalAmount }).ilike('username', actualUsername);
+            await supabase.from('users').update({ white_money: finalAmount }).ilike('username', `@${actualUsername}`);
           }
         } catch (err) {
           console.warn("Supabase updateWhiteMoney err:", err);
