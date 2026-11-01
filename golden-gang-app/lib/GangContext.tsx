@@ -943,18 +943,35 @@ export function GangProvider({ children }: { children: ReactNode }) {
       const totalCost = Number(tx.totalPrice || tx.amount) || 0;
       const isRed = tx.paymentMethod === 'uang_merah' || (tx.note || '').toLowerCase().includes('merah');
       if (isRed) {
+        // Pembelian pakai Uang Merah: Kas faksi bertambah karena pembeli menyetor uang merah
         const curDirty = Number(gangStats?.dirtyMoney) || 0;
-        updateDirtyMoney(Math.max(0, curDirty - totalCost));
+        updateDirtyMoney(curDirty + totalCost);
       } else {
-        const buyer = users.find(u => (u.username || '').toLowerCase() === (tx.user || '').toLowerCase());
-        if (buyer) {
-          const curWhite = Number(buyer.whiteMoney) || 0;
-          updateWhiteMoney(buyer.id, Math.max(0, curWhite - totalCost));
-        } else {
-          const targetAdmin = admins.find(a => a.id === tx.targetAdminId) || admins[0];
-          const targetId = targetAdmin?.id || tx.targetAdminId || dbUser?.id || '';
-          const curWhite = Number(targetAdmin?.whiteMoney ?? dbUser?.whiteMoney) || 0;
-          updateWhiteMoney(targetId, Math.max(0, curWhite - totalCost));
+        // Pembelian pakai Uang Putih (Transfer ke Rekening Admin):
+        // 1. Duit di rekening ADMIN tujuan BERTAMBAH (+ totalCost)!
+        let targetAdmin = admins.find(a => a.id === tx.targetAdminId);
+        if (!targetAdmin) {
+          const rekMatch = (tx.note || tx.details || '').match(/Rek:\s*@?(\w+)/i)?.[1];
+          if (rekMatch) {
+            targetAdmin = admins.find(a => (a.username || '').replace('@', '').toLowerCase() === rekMatch.toLowerCase());
+          }
+        }
+        if (!targetAdmin) {
+          targetAdmin = admins[0] || users.find(u => u.role === 'admin') || dbUser;
+        }
+
+        if (targetAdmin) {
+          const curAdminWhite = Number(targetAdmin.whiteMoney) || 0;
+          updateWhiteMoney(targetAdmin.id, curAdminWhite + totalCost);
+        }
+
+        // 2. Jika pembeli adalah member (bukan admin penerima rekening), potong saldo pembeli jika punya saldo
+        const buyer = users.find(u => (u.username || '').replace('@', '').toLowerCase() === (tx.user || '').replace('@', '').toLowerCase());
+        if (buyer && targetAdmin && buyer.id !== targetAdmin.id) {
+          const curBuyerWhite = Number(buyer.whiteMoney) || 0;
+          if (curBuyerWhite >= totalCost) {
+            updateWhiteMoney(buyer.id, curBuyerWhite - totalCost);
+          }
         }
       }
     }
@@ -1457,7 +1474,16 @@ export function GangProvider({ children }: { children: ReactNode }) {
   };
 
   const updateWhiteMoney = (userId: string, newTotal: number) => {
-    if (dbUser?.id === userId || !userId) {
+    const cleanId = (userId || '').trim();
+    const targetUser = users.find(u => 
+      (u.id && u.id === cleanId) || 
+      (u.username && u.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase())
+    ) || (dbUser && (dbUser.id === cleanId || dbUser.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase()) ? dbUser : null);
+
+    const actualId = targetUser?.id || cleanId;
+    const actualUsername = (targetUser?.username || cleanId).replace('@', '');
+
+    if (dbUser && (dbUser.id === actualId || dbUser.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) {
       setDbUser(prev => prev ? ({ ...prev, whiteMoney: newTotal }) : null);
       if (typeof window !== 'undefined') {
         try {
@@ -1470,19 +1496,30 @@ export function GangProvider({ children }: { children: ReactNode }) {
         } catch (e) {}
       }
     }
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, whiteMoney: newTotal } : u));
-    if (userId) {
-      updateDoc(doc(db, USERS_PATH, userId), { whiteMoney: newTotal }).catch(() => {});
+
+    setUsers(prev => prev.map(u => 
+      (u.id === actualId || (u.username && u.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) 
+        ? { ...u, whiteMoney: newTotal } 
+        : u
+    ));
+
+    if (actualId) {
+      updateDoc(doc(db, USERS_PATH, actualId), { whiteMoney: newTotal }).catch(() => {});
 
       if (isSupabaseConfigured) {
-        safeSupabase(supabase.from('users').update({ white_money: newTotal }).eq('id', userId));
+        safeSupabase(
+          supabase
+            .from('users')
+            .update({ white_money: newTotal })
+            .or(`id.eq.${actualId},username.ilike.${actualUsername}`)
+        );
       }
 
       try {
         fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update_white_money', userId, whiteMoney: newTotal })
+          body: JSON.stringify({ action: 'update_white_money', userId: actualId, whiteMoney: newTotal })
         }).catch(() => {});
       } catch (e) {}
     }
