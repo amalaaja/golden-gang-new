@@ -118,19 +118,17 @@ export default function TransaksiPage() {
         const targetAccount = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
         const currentBal = Number(targetAccount?.whiteMoney) || 0;
         if (txType === 'withdraw' && currentBal < qty) {
-          throw new Error(`Saldo Uang Putih pada rekening @${targetAccount?.username || 'user'} (${formatMoney(currentBal)}) tidak mencukupi untuk penarikan ${formatMoney(qty)}`);
+          throw new Error(`Saldo Uang Putih pada rekening kas @${targetAccount?.username || 'admin'} (${formatMoney(currentBal)}) tidak mencukupi untuk penarikan ${formatMoney(qty)}`);
         }
-        logDetails = `Uang Putih ${formatMoney(qty)} (Rek: @${targetAccount?.username || dbUser?.username || 'admin'})`;
+        logDetails = `Kas Uang Putih (@${targetAccount?.username || 'admin'})`;
         paymentMethod = 'uang_putih';
         totalVal = qty;
 
-        // Eksekusi mutasi saldo rekening uang putih seketika
-        if (txType === 'deposit') {
-          await updateWhiteMoney(targetAccount.id, currentBal + qty);
-        } else {
-          await updateWhiteMoney(targetAccount.id, Math.max(0, currentBal - qty));
-        }
+        // Untuk Uang Putih: TIDAK dieksekusi langsung! Wajib diverifikasi & di-ACC di menu Validasi Transaksi!
       }
+
+      const isPendingApproval = assetType === 'uang_putih';
+      const targetAdmin = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
 
       addTransaction({
         type: txType === 'deposit' ? 'DEPOSIT' : 'WITHDRAW',
@@ -145,14 +143,16 @@ export default function TransaksiPage() {
           ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
           : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`)),
         createdAtMs: Date.now(),
-        status: 'approved',
+        status: isPendingApproval ? 'pending' : 'approved',
         selectedItemId: selectedItemId || items[0]?.id,
-        targetAdminId: selectedAdminId || dbUser?.id
+        targetAdminId: targetAdmin?.id || dbUser?.id
       });
 
       setMsg({ 
         type: 'success', 
-        text: `Mutasi ${txType === 'deposit' ? 'Deposit (+)' : 'Withdraw (-)'} berhasil dieksekusi! Saldo dan stok telah diperbarui serta tercatat resmi di Log Riwayat.` 
+        text: isPendingApproval 
+          ? `Pengajuan mutasi ${txType === 'deposit' ? 'Deposit (+)' : 'Withdraw (-)'} Uang Putih berhasil dicatat! Menunggu verifikasi & ACC dari Administrator di menu Validasi Transaksi.`
+          : `Mutasi ${txType === 'deposit' ? 'Deposit (+)' : 'Withdraw (-)'} berhasil dieksekusi! Saldo dan stok telah diperbarui serta tercatat resmi di Log Riwayat.` 
       });
       setAmount('');
       setNote('');
