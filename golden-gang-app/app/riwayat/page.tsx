@@ -75,8 +75,8 @@ export default function RiwayatPage() {
 
     // 2. Kas Uang Putih
     if (tx.asset === 'uang_putih' || (tx.details && tx.details.toLowerCase().includes('uang putih') && !tx.details.toLowerCase().includes('x)'))) {
-      const rekMatch = tx.details?.match(/Rek:\s*(@\w+)/i)?.[1] || '';
-      const name = rekMatch ? `Kas Uang Putih (${rekMatch})` : 'Kas Uang Putih';
+      const rekMatch = tx.details?.match(/Rek:\s*(@\w+)/i)?.[1] || tx.details?.match(/\((@\w+)\)/i)?.[1] || '';
+      const name = rekMatch ? `Kas Uang Putih (${rekMatch})` : (tx.details || 'Kas Uang Putih');
       const amountVal = formatMoney(tx.totalPrice || tx.amount || 0);
       return {
         assetName: name,
