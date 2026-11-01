@@ -86,6 +86,13 @@ export default function TransaksiPage() {
         paymentMethod = 'uang_putih';
         const unitPrice = Number(item.price) || 5000;
         totalVal = unitPrice * qty;
+
+        // Eksekusi mutasi stok barang seketika (Deposit = Tambah, Withdraw = Kurang)
+        if (txType === 'deposit') {
+          updateItemStock(item.id, currentStock + qty);
+        } else {
+          updateItemStock(item.id, Math.max(0, currentStock - qty));
+        }
       } 
       else if (assetType === 'uang_merah') {
         const currentDirty = Number(gangStats?.dirtyMoney) || 0;
@@ -95,6 +102,13 @@ export default function TransaksiPage() {
         logDetails = `Uang Merah ${formatMoney(qty)}`;
         paymentMethod = 'uang_merah';
         totalVal = qty;
+
+        // Eksekusi mutasi kas uang merah seketika
+        if (txType === 'deposit') {
+          updateDirtyMoney(currentDirty + qty);
+        } else {
+          updateDirtyMoney(Math.max(0, currentDirty - qty));
+        }
       }
       else if (assetType === 'uang_putih') {
         const targetAccount = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
@@ -105,6 +119,13 @@ export default function TransaksiPage() {
         logDetails = `Uang Putih ${formatMoney(qty)} (Rek: @${targetAccount?.username || dbUser?.username || 'admin'})`;
         paymentMethod = 'uang_putih';
         totalVal = qty;
+
+        // Eksekusi mutasi saldo rekening uang putih seketika
+        if (txType === 'deposit') {
+          updateWhiteMoney(targetAccount.id, currentBal + qty);
+        } else {
+          updateWhiteMoney(targetAccount.id, Math.max(0, currentBal - qty));
+        }
       }
 
       addTransaction({
@@ -120,12 +141,15 @@ export default function TransaksiPage() {
           ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
           : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`)),
         createdAtMs: Date.now(),
-        status: 'pending',
+        status: 'approved',
         selectedItemId: selectedItemId || items[0]?.id,
         targetAdminId: selectedAdminId || dbUser?.id
       });
 
-      setMsg({ type: 'success', text: 'Pengajuan mutasi ledger berhasil dicatat! Menunggu verifikasi & ACC dari Administrator di menu Validasi Transaksi.' });
+      setMsg({ 
+        type: 'success', 
+        text: `Mutasi ${txType === 'deposit' ? 'Deposit (+)' : 'Withdraw (-)'} berhasil dieksekusi! Saldo dan stok telah diperbarui serta tercatat resmi di Log Riwayat.` 
+      });
       setAmount('');
       setNote('');
     } catch (err: any) {
