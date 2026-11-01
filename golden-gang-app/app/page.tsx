@@ -21,7 +21,7 @@ import { formatMoney } from '@/lib/firebase';
 import ChangeImageModal from '@/app/components/ChangeImageModal';
 
 export default function DashboardPage() {
-  const { items, gangStats, users } = useGang();
+  const { items, gangStats, admins, dbUser } = useGang();
   const [filter, setFilter] = useState('SEMUA');
   const [search, setSearch] = useState('');
   const [showAdminVaults, setShowAdminVaults] = useState(false);
@@ -33,9 +33,9 @@ export default function DashboardPage() {
     return matchCat && matchSearch;
   });
 
-  const totalWhiteMoney = (users || [])
-    .filter(u => u && u.status === 'approved')
-    .reduce((sum, u) => sum + (Number(u.whiteMoney) || 0), 0);
+  const totalWhiteMoney = (admins || [])
+    .filter(a => a && a.status === 'approved')
+    .reduce((sum, a) => sum + (Number(a.whiteMoney) || 0), 0);
 
   return (
     <div className="space-y-4 sm:space-y-5 animate-in fade-in duration-300">
@@ -112,12 +112,12 @@ export default function DashboardPage() {
             
             {showAdminVaults && (
               <div className="mt-4 pt-3 border-t border-white/10 space-y-2 animate-in slide-in-from-top-2 duration-300 relative z-10 max-h-48 overflow-y-auto custom-scrollbar">
-                {(users || []).filter(u => u && u.status === 'approved').map(acc => (
-                  <div key={acc.id} className="flex justify-between items-center bg-[#07090C] p-2.5 rounded-xl border border-white/5 hover:border-amber-500/30 transition-colors">
+                {(admins || []).filter(a => a && a.status === 'approved').map(acc => (
+                  <div key={acc.id} className="flex justify-between items-center bg-[#07090D] p-2.5 rounded-xl border border-white/5 hover:border-amber-500/30 transition-colors">
                     <span className="text-gray-300 text-xs font-bold">
-                      Rekening <span className="text-amber-400">@{acc.username}</span>
-                      <span className="text-[9.5px] text-gray-500 ml-1.5 font-normal uppercase">
-                        ({acc.role === 'admin' ? 'ADMIN' : 'MEMBER'})
+                      Rekening Kas <span className="text-amber-400">@{acc.username}</span>
+                      <span className="text-[9.5px] text-amber-500/80 ml-1.5 font-normal uppercase">
+                        (ADMIN{acc.id === dbUser?.id ? ' • AKUN SAYA' : ''})
                       </span>
                     </span>
                     <span className="text-white font-mono-tech font-bold text-xs">{formatMoney(acc.whiteMoney)}</span>
@@ -128,7 +128,7 @@ export default function DashboardPage() {
             
             {!showAdminVaults && (
               <p className="text-[11px] text-gray-400 mt-4 flex items-center gap-1.5 relative z-10">
-                <Landmark size={13} className="text-amber-400/80 shrink-0" /> Total dana legal di seluruh rekening sindikat
+                <Landmark size={13} className="text-amber-400/80 shrink-0" /> Total kas legal di brankas rekening administrator sindikat
               </p>
             )}
           </div>
