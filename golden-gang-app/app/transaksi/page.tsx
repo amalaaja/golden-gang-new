@@ -9,8 +9,10 @@ export default function TransaksiPage() {
   const { 
     items, 
     admins, 
+    users,
     gangStats, 
     dbUser, 
+    isAdmin,
     addTransaction, 
     updateItemStock, 
     updateDirtyMoney, 
@@ -20,18 +22,36 @@ export default function TransaksiPage() {
   const [assetType, setAssetType] = useState<'barang' | 'uang_merah' | 'uang_putih'>('barang');
   const [txType, setTxType] = useState<'deposit' | 'withdraw'>('deposit');
   const [selectedItemId, setSelectedItemId] = useState('');
-  const [selectedAdminId, setSelectedAdminId] = useState(admins[0]?.id || '');
+  const [selectedAdminId, setSelectedAdminId] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ type: '', text: '' });
 
-  React.useEffect(() => {
-    if (!selectedAdminId && admins && admins.length > 0) {
-      setSelectedAdminId(admins[0].id);
+  // Daftar rekening yang dapat ditransaksikan (Member dapat memilih rekeningnya sendiri / admin, Admin dapat memilih semua akun)
+  const eligibleAccounts = React.useMemo(() => {
+    if (!dbUser) return [];
+    if (isAdmin) {
+      return (users || []).filter(u => u && u.id && u.status === 'approved');
     }
-  }, [admins, selectedAdminId]);
+    const myAcc = (users || []).find(u => u.id === dbUser.id || (u.username || '').toLowerCase() === (dbUser.username || '').toLowerCase()) || dbUser;
+    const list = [myAcc];
+    (admins || []).forEach(a => {
+      if (a && a.id !== myAcc.id && !list.some(x => x.id === a.id)) {
+        list.push(a);
+      }
+    });
+    return list;
+  }, [isAdmin, users, admins, dbUser]);
+
+  React.useEffect(() => {
+    if (eligibleAccounts && eligibleAccounts.length > 0) {
+      if (!selectedAdminId || !eligibleAccounts.some(a => a.id === selectedAdminId)) {
+        setSelectedAdminId(eligibleAccounts[0].id);
+      }
+    }
+  }, [eligibleAccounts, selectedAdminId]);
 
   React.useEffect(() => {
     if (!selectedItemId && items && items.length > 0) {
@@ -60,30 +80,29 @@ export default function TransaksiPage() {
         
         const currentStock = Number(item.stock) || 0;
         if (txType === 'withdraw' && currentStock < qty) {
-          throw new Error("Stok aset di brankas tidak mencukupi untuk penarikan");
+          throw new Error(`Stok ${item.name} di brankas (${currentStock}) tidak mencukupi untuk penarikan ${qty}x`);
         }
         logDetails = `${item.name || 'Barang'} (${qty}x)`;
-        paymentMethod = 'uang_putih'; // Aset fisik / item brankas otomatis Uang Putih
+        paymentMethod = 'uang_putih';
         const unitPrice = Number(item.price) || 5000;
         totalVal = unitPrice * qty;
       } 
       else if (assetType === 'uang_merah') {
         const currentDirty = Number(gangStats?.dirtyMoney) || 0;
         if (txType === 'withdraw' && currentDirty < qty) {
-          throw new Error("Saldo Kas Uang Merah tidak mencukupi untuk penarikan");
+          throw new Error("Saldo Kas Uang Merah faksi tidak mencukupi untuk penarikan");
         }
         logDetails = `Uang Merah ${formatMoney(qty)}`;
         paymentMethod = 'uang_merah';
         totalVal = qty;
       }
       else if (assetType === 'uang_putih') {
-        const validAdmins = admins || [];
-        const admin = validAdmins.find(a => a && a.id === selectedAdminId) || validAdmins[0];
-        const currentBal = Number(admin?.whiteMoney ?? dbUser?.whiteMoney) || 0;
+        const targetAccount = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
+        const currentBal = Number(targetAccount?.whiteMoney) || 0;
         if (txType === 'withdraw' && currentBal < qty) {
-          throw new Error("Saldo Uang Putih pada rekening tidak mencukupi untuk penarikan");
+          throw new Error(`Saldo Uang Putih pada rekening @${targetAccount?.username || 'user'} (${formatMoney(currentBal)}) tidak mencukupi untuk penarikan ${formatMoney(qty)}`);
         }
-        logDetails = `Uang Putih ${formatMoney(qty)} (Rek: @${admin?.username || dbUser?.username || 'admin'})`;
+        logDetails = `Uang Putih ${formatMoney(qty)} (Rek: @${targetAccount?.username || dbUser?.username || 'admin'})`;
         paymentMethod = 'uang_putih';
         totalVal = qty;
       }
@@ -93,17 +112,17 @@ export default function TransaksiPage() {
         user: dbUser?.username || 'member_sindikat',
         asset: assetType,
         details: logDetails,
-        ...(assetType === 'barang' ? { itemQty: qty } : {}),
+        itemQty: qty,
         amount: totalVal,
         totalPrice: totalVal,
         paymentMethod: paymentMethod,
         note: note || (assetType === 'barang' 
-          ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} (Uang Putih)` 
-          : (txType === 'deposit' ? 'Setoran Aset/Dana' : 'Penarikan Aset/Dana')),
+          ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
+          : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`)),
         createdAtMs: Date.now(),
         status: 'pending',
         selectedItemId: selectedItemId || items[0]?.id,
-        targetAdminId: selectedAdminId || admins[0]?.id
+        targetAdminId: selectedAdminId || dbUser?.id
       });
 
       setMsg({ type: 'success', text: 'Pengajuan mutasi ledger berhasil dicatat! Menunggu verifikasi & ACC dari Administrator di menu Validasi Transaksi.' });
@@ -204,14 +223,18 @@ export default function TransaksiPage() {
 
           {assetType === 'uang_putih' && (
             <div className="animate-in slide-in-from-top-2 duration-200">
-              <label className="text-[9.5px] uppercase tracking-widest text-amber-400/90 font-bold mb-1.5 block">Pilih Rekening Admin</label>
+              <label className="text-[9.5px] uppercase tracking-widest text-amber-400/90 font-bold mb-1.5 block">
+                Pilih Rekening Transaksi ({isAdmin ? 'Seluruh Anggota / Admin' : 'Rekening Sendiri / Admin'})
+              </label>
               <select 
                 value={selectedAdminId} 
                 onChange={(e) => setSelectedAdminId(e.target.value)} 
                 className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-amber-500/60 shadow-inner"
               >
-                {(admins || []).filter(a => a && a.id).map(a => (
-                  <option key={a.id} value={a.id}>Rekening @{a.username} - {formatMoney(a.whiteMoney)}</option>
+                {eligibleAccounts.map(a => (
+                  <option key={a.id} value={a.id}>
+                    Rekening @{a.username} ({a.role === 'admin' ? 'ADMIN' : 'MEMBER'}{a.id === dbUser?.id ? ' - Akun Saya' : ''}) - {formatMoney(a.whiteMoney)}
+                  </option>
                 ))}
               </select>
             </div>
