@@ -930,22 +930,22 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 1. Eksekusi Pembelian Toko Internal
     if (tx.type === 'SHOP_PURCHASE') {
       if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
-        tx.itemsPayload.forEach(cartItem => {
+        for (const cartItem of tx.itemsPayload) {
           const currentItem = items.find(i => 
             i.id === cartItem.id || 
             (i?.name || '').toLowerCase().trim() === (cartItem?.name || '').toLowerCase().trim()
           );
           if (currentItem) {
             const newStock = Math.max(0, (Number(currentItem.stock) || 0) - (Number(cartItem.qty) || 1));
-            updateItemStock(currentItem.id, newStock);
+            await updateItemStock(currentItem.id, newStock);
           }
-        });
+        }
       } else {
         // Fallback: Parsing teks nama barang & kuantitas dari tx.details atau tx.items (misal: "VEST BIRU (1x)")
         const rawItems = tx.details || tx.items || '';
         const parts = rawItems.split(',').map((s: string) => s.trim()).filter(Boolean);
         
-        parts.forEach((part: string) => {
+        for (const part of parts) {
           const match = part.match(/^(.*?)\s*\((\d+)x\)$/);
           const itemName = match ? match[1].trim() : part.replace(/\(\d+x\)/g, '').trim();
           const qty = match ? Number(match[2]) || 1 : (Number(tx.itemQty) || 1);
@@ -960,9 +960,9 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
           if (currentItem) {
             const newStock = Math.max(0, (Number(currentItem.stock) || 0) - qty);
-            updateItemStock(currentItem.id, newStock);
+            await updateItemStock(currentItem.id, newStock);
           }
-        });
+        }
       }
 
       const totalCost = Number(tx.totalPrice || tx.amount) || 0;
@@ -970,7 +970,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       if (isRed) {
         // Pembelian pakai Uang Merah: Kas faksi bertambah karena pembeli menyetor uang merah
         const curDirty = Number(gangStats?.dirtyMoney) || 0;
-        updateDirtyMoney(curDirty + totalCost);
+        await updateDirtyMoney(curDirty + totalCost);
       } else {
         // Pembelian pakai Uang Putih (Transfer ke Rekening Admin):
         // 1. Duit di rekening ADMIN tujuan BERTAMBAH (+ totalCost)!
@@ -987,7 +987,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
         if (targetAdmin) {
           const curAdminWhite = Number(targetAdmin.whiteMoney) || 0;
-          updateWhiteMoney(targetAdmin.id, curAdminWhite + totalCost);
+          await updateWhiteMoney(targetAdmin.id, curAdminWhite + totalCost);
         }
 
         // 2. Jika pembeli adalah member (bukan admin penerima rekening), potong saldo pembeli jika punya saldo
@@ -995,7 +995,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
         if (buyer && targetAdmin && buyer.id !== targetAdmin.id) {
           const curBuyerWhite = Number(buyer.whiteMoney) || 0;
           if (curBuyerWhite >= totalCost) {
-            updateWhiteMoney(buyer.id, curBuyerWhite - totalCost);
+            await updateWhiteMoney(buyer.id, curBuyerWhite - totalCost);
           }
         }
       }
@@ -1025,7 +1025,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       if (isRedTx) {
         // Setor Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
-        updateDirtyMoney(cur + qty);
+        await updateDirtyMoney(cur + qty);
       } else if (isItemTx) {
         // Setor Barang ke Brankas: Stok bertambah!
         const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
@@ -1040,18 +1040,18 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
         if (curItem) {
           const newStock = (Number(curItem.stock) || 0) + physicalQty;
-          updateItemStock(curItem.id, newStock);
+          await updateItemStock(curItem.id, newStock);
         }
       } else {
-        // Setor Uang Putih: Rekening tujuan bertambah!
-        let targetUser = users.find(u => 
+        // Setor Uang Putih: Rekening Kas Admin tujuan bertambah!
+        let targetUser = admins.find(a => a.id === tx.targetAdminId) || users.find(u => 
           (tx.targetAdminId && u.id === tx.targetAdminId) ||
           (tx.user && u.username.toLowerCase() === tx.user.toLowerCase())
         );
         if (!targetUser) {
           const rekMatch = (tx.details || tx.note || '').match(/Rek:\s*@?(\w+)/i)?.[1];
           if (rekMatch) {
-            targetUser = users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
+            targetUser = admins.find(a => a.username.toLowerCase() === rekMatch.toLowerCase()) || users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
           }
         }
         if (!targetUser) {
@@ -1060,7 +1060,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
         if (targetUser) {
           const cur = Number(targetUser.whiteMoney) || 0;
-          updateWhiteMoney(targetUser.id, cur + qty);
+          await updateWhiteMoney(targetUser.id, cur + qty);
         }
       }
     }
@@ -1072,7 +1072,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       if (isRedTx) {
         // Tarik Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
-        updateDirtyMoney(Math.max(0, cur - qty));
+        await updateDirtyMoney(Math.max(0, cur - qty));
       } else if (isItemTx) {
         // Tarik Barang dari Brankas: Stok berkurang!
         const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
@@ -1087,18 +1087,18 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
         if (curItem) {
           const newStock = Math.max(0, (Number(curItem.stock) || 0) - physicalQty);
-          updateItemStock(curItem.id, newStock);
+          await updateItemStock(curItem.id, newStock);
         }
       } else {
-        // Tarik Uang Putih: Rekening berkurang!
-        let targetUser = users.find(u => 
+        // Tarik Uang Putih: Rekening Kas Admin berkurang!
+        let targetUser = admins.find(a => a.id === tx.targetAdminId) || users.find(u => 
           (tx.targetAdminId && u.id === tx.targetAdminId) ||
           (tx.user && u.username.toLowerCase() === tx.user.toLowerCase())
         );
         if (!targetUser) {
           const rekMatch = (tx.details || tx.note || '').match(/Rek:\s*@?(\w+)/i)?.[1];
           if (rekMatch) {
-            targetUser = users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
+            targetUser = admins.find(a => a.username.toLowerCase() === rekMatch.toLowerCase()) || users.find(u => u.username.toLowerCase() === rekMatch.toLowerCase());
           }
         }
         if (!targetUser) {
@@ -1107,7 +1107,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
         if (targetUser) {
           const cur = Number(targetUser.whiteMoney) || 0;
-          updateWhiteMoney(targetUser.id, Math.max(0, cur - qty));
+          await updateWhiteMoney(targetUser.id, Math.max(0, cur - qty));
         }
       }
     }
@@ -1148,7 +1148,6 @@ export function GangProvider({ children }: { children: ReactNode }) {
       safeSupabase(
         supabase.from('transactions').update({
           status: 'approved',
-          approved_by: adminName,
           created_at_ms: now
         }).eq('id', txId)
       );
