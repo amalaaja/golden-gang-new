@@ -142,8 +142,16 @@ export async function POST(req: Request) {
     // 6. Update Saldo Uang Putih User
     if (action === 'update_white_money') {
       const { userId, whiteMoney } = body;
+      const cleanTarget = String(userId || '').replace('@', '').toLowerCase();
       const currentUsers = readJsonFile<any[]>(usersFilePath, []);
-      const updated = currentUsers.map(u => (u.id === userId || u.username === userId) ? { ...u, whiteMoney: Number(whiteMoney) || 0 } : u);
+      const updated = currentUsers.map((u: any) => {
+        const uId = String(u.id || '').toLowerCase();
+        const uName = String(u.username || '').replace('@', '').toLowerCase();
+        if (uId === cleanTarget || uName === cleanTarget) {
+          return { ...u, whiteMoney: Number(whiteMoney) || 0 };
+        }
+        return u;
+      });
       writeJsonFile(usersFilePath, updated);
       return NextResponse.json({ success: true, users: updated });
     }
