@@ -94,7 +94,7 @@ interface GangContextType {
   transactions: Transaction[];
   gangStats: { dirtyMoney: number };
   handleLogin: (username: string, pass: string) => Promise<{ success: boolean; message?: string }>;
-  handleRegister?: (username: string, pass: string, icName?: string) => Promise<{ success: boolean; message?: string }>;
+  handleRegister?: (username: string, pass: string, icName?: string) => Promise<{ success: boolean; message?: string; isPending?: boolean }>;
   handleLogout: () => Promise<void>;
   addTransaction: (data: NewTransactionInput) => string;
   approveTransaction: (txId: string) => Promise<void>;
@@ -732,20 +732,30 @@ export function GangProvider({ children }: { children: ReactNode }) {
       return { success: false, message: 'Username sudah terdaftar! Silakan gunakan username lain atau login.' };
     }
 
-    const hasAdmin = users.some(u => u.role === 'admin' && u.status === 'approved');
-    const isFirstUser = users.length === 0 || !hasAdmin || cleanUser === 'alvaro';
+    if (isSupabaseConfigured) {
+      try {
+        const { data: suExisting } = await supabase.from('users').select('id, username').ilike('username', cleanUser).maybeSingle();
+        if (suExisting) {
+          return { success: false, message: 'Username sudah terdaftar di database! Silakan login.' };
+        }
+      } catch (e) {}
+    }
+
+    // Hanya akun alvaro yang otomatis jadi Admin dan langsung approved
+    const isMasterAdmin = cleanUser === 'alvaro';
     const newMember: DbUser = {
       id: `user_${Date.now()}`,
       username: cleanUser,
       icName: cleanIc,
       password: cleanPass,
-      role: isFirstUser ? 'admin' : 'member',
-      status: isFirstUser ? 'approved' : 'pending',
-      whiteMoney: isFirstUser ? 25000000 : 5000000,
+      role: isMasterAdmin ? 'admin' : 'member',
+      status: isMasterAdmin ? 'approved' : 'pending', // Selain alvaro, SEMUA WAJIB MENUNGGU ACC ADMIN
+      whiteMoney: isMasterAdmin ? 25000000 : 0,
       joinedAt: new Date().toISOString()
     };
 
-    if (isFirstUser) {
+    // HANYA alvaro yang langsung login otomatis. Member pending TIDAK BOLEH login langsung!
+    if (isMasterAdmin) {
       setDbUser(newMember);
       if (typeof window !== 'undefined') {
         localStorage.setItem('gang_active_user', JSON.stringify(newMember));
@@ -798,9 +808,10 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     return { 
       success: true, 
-      message: isFirstUser 
-        ? 'Pendaftaran akun Admin utama berhasil! Anda sekarang dapat langsung masuk ke sistem.' 
-        : 'Pendaftaran berhasil! Akun Anda telah masuk ke daftar Data Member dan sedang MENUNGGU ACC dari Admin sebelum dapat masuk ke sistem.' 
+      isPending: !isMasterAdmin,
+      message: isMasterAdmin 
+        ? 'Pendaftaran akun Admin utama @alvaro berhasil! Anda dapat langsung masuk.' 
+        : `Pendaftaran berhasil! Akun @${cleanUser} (${cleanIc}) telah masuk ke Data Member dan sedang MENUNGGU ACC dari Admin sebelum dapat masuk ke sistem.` 
     };
   };
 
@@ -1393,7 +1404,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 2. Background Firestore & Supabase (non-blocking)
     updateDoc(doc(db, USERS_PATH, userId), { status }).catch(() => {});
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('users').update({ status }).eq('id', userId));
+      safeSupabase(supabase.from('users').update({ status }).or(`id.eq.${userId},username.ilike.${userId}`));
     }
   };
 
@@ -1447,7 +1458,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
     // 2. Background Firestore & Supabase (non-blocking)
     updateDoc(doc(db, USERS_PATH, userId), { role }).catch(() => {});
     if (isSupabaseConfigured) {
-      safeSupabase(supabase.from('users').update({ role }).eq('id', userId));
+      safeSupabase(supabase.from('users').update({ role }).or(`id.eq.${userId},username.ilike.${userId}`));
     }
   };
 
