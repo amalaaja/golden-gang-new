@@ -84,8 +84,8 @@ export default function KelolaBarangPage() {
         name: editForm.name.trim(),
         category: editForm.category,
         vault: editForm.vault.trim(),
-        stock: Number(editForm.stock) || 0,
-        price: Number(editForm.price) || 0,
+        stock: Number(editingItem.stock) || 0,
+        price: Number(editingItem.price) || 0,
         image: editForm.image.trim() || undefined
       });
       setEditingItem(null);
@@ -374,33 +374,7 @@ export default function KelolaBarangPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">
-                    Stok Tersedia
-                  </label>
-                  <input 
-                    type="number" 
-                    min="0"
-                    required
-                    value={editForm.stock} 
-                    onChange={e => setEditForm({ ...editForm, stock: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-[#050608] border border-white/10 text-amber-400 font-mono-tech font-bold rounded-xl p-3 text-xs focus:border-amber-500/60 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">
-                    Harga Satuan (USD)
-                  </label>
-                  <input 
-                    type="number" 
-                    min="0"
-                    value={editForm.price} 
-                    onChange={e => setEditForm({ ...editForm, price: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-[#050608] border border-white/10 text-amber-400 font-mono-tech font-bold rounded-xl p-3 text-xs focus:border-amber-500/60 focus:outline-none"
-                  />
-                </div>
-              </div>
+
 
               <div>
                 <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">
