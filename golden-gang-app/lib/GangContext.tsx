@@ -1033,13 +1033,21 @@ export function GangProvider({ children }: { children: ReactNode }) {
         const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
 
         const curItem = items.find(i => 
-          (tx.selectedItemId && i.id === tx.selectedItemId) || 
-          (i.name && rawName.includes(i.name.toLowerCase())) ||
-          (i.name && i.name.toLowerCase().includes(rawName))
+          (tx.selectedItemId && (i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId))) || 
+          (i.name && (rawName === i.name.toLowerCase() || rawName.includes(i.name.toLowerCase()) || i.name.toLowerCase().includes(rawName)))
         );
 
         if (curItem) {
-          const newStock = (Number(curItem.stock) || 0) + physicalQty;
+          let currentStock = Number(curItem.stock) || 0;
+          if (isSupabaseConfigured) {
+            try {
+              const { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              if (suItem && typeof suItem.stock === 'number') {
+                currentStock = Number(suItem.stock);
+              }
+            } catch (e) {}
+          }
+          const newStock = (Number(currentStock) || 0) + physicalQty;
           await updateItemStock(curItem.id, newStock);
         }
       } else {
@@ -1084,13 +1092,21 @@ export function GangProvider({ children }: { children: ReactNode }) {
         const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
 
         const curItem = items.find(i => 
-          (tx.selectedItemId && i.id === tx.selectedItemId) || 
-          (i.name && rawName.includes(i.name.toLowerCase())) ||
-          (i.name && i.name.toLowerCase().includes(rawName))
+          (tx.selectedItemId && (i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId))) || 
+          (i.name && (rawName === i.name.toLowerCase() || rawName.includes(i.name.toLowerCase()) || i.name.toLowerCase().includes(rawName)))
         );
 
         if (curItem) {
-          const newStock = Math.max(0, (Number(curItem.stock) || 0) - physicalQty);
+          let currentStock = Number(curItem.stock) || 0;
+          if (isSupabaseConfigured) {
+            try {
+              const { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              if (suItem && typeof suItem.stock === 'number') {
+                currentStock = Number(suItem.stock);
+              }
+            } catch (e) {}
+          }
+          const newStock = Math.max(0, (Number(currentStock) || 0) - physicalQty);
           await updateItemStock(curItem.id, newStock);
         }
       } else {
