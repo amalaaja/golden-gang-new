@@ -22,6 +22,7 @@ export default function TransaksiPage() {
   const [assetType, setAssetType] = useState<'barang' | 'uang_merah' | 'uang_putih'>('barang');
   const [txType, setTxType] = useState<'deposit' | 'withdraw'>('deposit');
   const [selectedItemId, setSelectedItemId] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('SEMUA');
   const [selectedAdminId, setSelectedAdminId] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -57,11 +58,27 @@ export default function TransaksiPage() {
     }
   }, [eligibleAccounts, selectedAdminId]);
 
+  const itemCategories = React.useMemo(() => {
+    const defaultCats = ['SEMUA', 'DRUG', 'WEAPON', 'ITEM', 'MAGAZINE', 'EXTENDE WEAPON'];
+    const dynamicCats = (items || []).map(i => (i.category || 'ITEM').toUpperCase());
+    return Array.from(new Set([...defaultCats, ...dynamicCats]));
+  }, [items]);
+
+  const filteredItems = React.useMemo(() => {
+    if (!items || items.length === 0) return [];
+    if (selectedCategory === 'SEMUA') return items;
+    return items.filter(i => (i.category || 'ITEM').toUpperCase() === selectedCategory);
+  }, [items, selectedCategory]);
+
   React.useEffect(() => {
-    if (!selectedItemId && items && items.length > 0) {
-      setSelectedItemId(items[0].id);
+    if (filteredItems.length > 0) {
+      if (!selectedItemId || !filteredItems.some(i => i.id === selectedItemId)) {
+        setSelectedItemId(filteredItems[0].id);
+      }
+    } else {
+      setSelectedItemId('');
     }
-  }, [items, selectedItemId]);
+  }, [filteredItems, selectedItemId]);
 
   const handleTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -232,20 +249,45 @@ export default function TransaksiPage() {
           </div>
 
           {assetType === 'barang' && (
-            <div className="animate-in slide-in-from-top-2 duration-200">
-              <label className="text-[11px] uppercase tracking-widest text-amber-400/90 font-bold mb-2 block">
-                Pilih Aset Fisik
-              </label>
-              <select 
-                value={selectedItemId} 
-                onChange={(e) => setSelectedItemId(e.target.value)} 
-                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner"
-              >
-                <option value="">-- Buka Katalog Brankas --</option>
-                {(items || []).filter(i => i && i.id).map(i => (
-                  <option key={i.id} value={i.id}>{i.name} (Tersedia: {i.stock || 0})</option>
-                ))}
-              </select>
+            <div className="space-y-4 sm:space-y-5 animate-in slide-in-from-top-2 duration-200">
+              <div>
+                <label className="text-[11px] uppercase tracking-widest text-amber-400/90 font-bold mb-2 block">
+                  Kategori Aset Fisik
+                </label>
+                <select 
+                  value={selectedCategory} 
+                  onChange={(e) => setSelectedCategory(e.target.value)} 
+                  className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner"
+                >
+                  {itemCategories.map(cat => (
+                    <option key={cat} value={cat}>
+                      {cat === 'SEMUA' ? 'Semua Kategori' : cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] uppercase tracking-widest text-amber-400/90 font-bold mb-2 block">
+                  Pilih Aset Fisik
+                </label>
+                <select 
+                  value={selectedItemId} 
+                  onChange={(e) => setSelectedItemId(e.target.value)} 
+                  className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner"
+                  required
+                >
+                  {filteredItems.length === 0 ? (
+                    <option value="">-- Tidak ada aset pada kategori ini --</option>
+                  ) : (
+                    filteredItems.map(i => (
+                      <option key={i.id} value={i.id}>
+                        {i.name} (Tersedia: {i.stock || 0})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
             </div>
           )}
 
