@@ -87,9 +87,8 @@ export default function TransaksiPage() {
           throw new Error(`Stok ${item.name} di brankas (${currentStock}) tidak mencukupi untuk penarikan ${qty}x`);
         }
         logDetails = `${item.name || 'Barang'} (${qty}x)`;
-        paymentMethod = 'uang_putih';
-        const unitPrice = Number(item.price) || 5000;
-        totalVal = unitPrice * qty;
+        paymentMethod = '';
+        totalVal = 0;
 
         // Eksekusi mutasi stok barang seketika (Deposit = Tambah, Withdraw = Kurang)
         if (txType === 'deposit') {
