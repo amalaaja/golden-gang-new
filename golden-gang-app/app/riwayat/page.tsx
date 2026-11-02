@@ -138,7 +138,7 @@ export default function RiwayatPage() {
     const pm = (tx.paymentMethod || '').toLowerCase();
     const asset = (tx.asset || '').toLowerCase();
     if (pm === 'uang_merah' || asset === 'uang_merah') return 'Uang Merah';
-    if (pm === 'uang_putih' || asset === 'uang_putih' || asset === 'barang') return 'Uang Putih';
+    if (pm === 'uang_putih' || asset === 'uang_putih') return 'Uang Putih';
 
     const full = `${tx.details || ''} ${tx.note || ''} ${typeof tx.items === 'string' ? tx.items : ''}`.toLowerCase();
     if (full.includes('uang merah') || full.includes('kas gelap') || full.includes('uang_merah')) return 'Uang Merah';
@@ -147,7 +147,6 @@ export default function RiwayatPage() {
     if (full.includes('merah')) return 'Uang Merah';
     if (full.includes('putih')) return 'Uang Putih';
 
-    // Seluruh item fisik / aset brankas / mutasi non-merah OTOMATIS Uang Putih
     return 'Uang Putih';
   };
 
@@ -379,6 +378,19 @@ export default function RiwayatPage() {
                   const isWithdraw = tx.type === 'WITHDRAW';
                   const recent = isRecent(tx);
 
+                  // Deteksi apakah transaksi ini adalah mutasi uang (Kas Uang Merah atau Kas Uang Putih)
+                  const isMoneyMutation = 
+                    tx.asset === 'uang_merah' || 
+                    tx.asset === 'uang_putih' || 
+                    (Boolean(tx.details) && (
+                      tx.details.toLowerCase().includes('kas uang') || 
+                      tx.details.toLowerCase().includes('uang merah') || 
+                      tx.details.toLowerCase().includes('uang putih')
+                    ));
+
+                  // Mutasi murni barang fisik dari Menu Transaksi tidak menampilkan nominal harga
+                  const isPureItemMutation = !isPurchase && !isMoneyMutation;
+
                   // Nama akun yang melakukan transaksi
                   const operatorName = tx.user || 'member';
 
@@ -457,7 +469,7 @@ export default function RiwayatPage() {
                         );
                       })()}
                       <td className="px-3.5 py-2 font-mono-tech">
-                        {tx.totalPrice || tx.amount ? (
+                        {!isPureItemMutation && (tx.totalPrice || tx.amount) ? (
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`font-bold text-xs ${isWithdraw ? 'text-rose-400' : 'text-amber-400'}`}>
                               {formatMoney(tx.totalPrice || tx.amount)}
@@ -474,7 +486,7 @@ export default function RiwayatPage() {
                             )}
                           </div>
                         ) : (
-                          <span className="text-gray-500 text-[11px]">-</span>
+                          <span className="text-gray-500 text-[11px] font-mono-tech">-</span>
                         )}
                       </td>
                       <td className="px-3.5 py-2">
