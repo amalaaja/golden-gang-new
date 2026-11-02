@@ -156,67 +156,73 @@ export default function TransaksiPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4 animate-in fade-in duration-300">
+    <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-300">
       <header>
-        <div className="flex items-center gap-2">
-          <span className="p-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-            <ArrowRightLeft size={18} />
+        <div className="flex items-center gap-2.5">
+          <span className="p-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+            <ArrowRightLeft size={22} />
           </span>
-          <h1 className="text-xl sm:text-2xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white tracking-tight">
             Menu <span className="text-gold">Transaksi</span>
           </h1>
         </div>
-        <p className="text-gray-400 text-xs mt-0.5">
+        <p className="text-gray-400 text-xs sm:text-sm mt-1">
           Entri manual mutasi aset fisik dan penyesuaian likuiditas kas.
         </p>
       </header>
 
-      <div className="glass-panel rounded-2xl p-4 sm:p-6 shadow-2xl border border-white/10 relative overflow-hidden">
+      <div className="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl border border-white/10 relative overflow-hidden">
         {msg.text && (
-          <div className={`p-3 mb-4 rounded-xl text-xs font-bold flex items-center gap-2.5 backdrop-blur-sm border ${
+          <div className={`p-4 mb-6 rounded-2xl text-xs sm:text-sm font-bold flex items-center gap-3 backdrop-blur-sm border ${
             msg.type === 'error' ? 'bg-rose-950/40 text-rose-400 border-rose-900/50' : 'bg-emerald-950/40 text-emerald-400 border-emerald-900/50'
           }`}>
-            {msg.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}
+            {msg.type === 'error' ? <AlertCircle size={18} /> : <Check size={18} />}
             {msg.text}
           </div>
         )}
 
-        <form onSubmit={handleTransaction} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+        <form onSubmit={handleTransaction} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
             <div>
-              <label className="text-[9.5px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">Jenis Operasi Mutasi</label>
-              <div className="flex bg-[#050608] border border-white/10 p-1 rounded-xl">
+              <label className="text-[11px] uppercase tracking-widest text-gray-400 font-bold mb-2 block">
+                Jenis Operasi Mutasi
+              </label>
+              <div className="grid grid-cols-2 gap-3 sm:gap-3.5">
                 <button 
                   type="button" 
                   onClick={() => setTxType('deposit')} 
-                  className={`flex-1 py-2 text-xs tracking-wider font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase ${
+                  className={`py-3 px-3 sm:px-4 text-xs sm:text-sm tracking-wider font-bold rounded-xl transition-all flex items-center justify-center gap-2 uppercase border ${
                     txType === 'deposit' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.2)]' 
-                      : 'text-gray-500 hover:text-white'
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.25)] ring-1 ring-emerald-500/30' 
+                      : 'bg-[#050608] border-white/10 text-gray-400 hover:text-white hover:border-white/20'
                   }`}
                 >
-                  <ArrowDownLeft size={13} /> Deposit (+)
+                  <ArrowDownLeft size={16} className={txType === 'deposit' ? 'text-emerald-400' : 'text-gray-500'} /> 
+                  <span>Deposit (+)</span>
                 </button>
                 <button 
                   type="button" 
                   onClick={() => setTxType('withdraw')} 
-                  className={`flex-1 py-2 text-xs tracking-wider font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase ${
+                  className={`py-3 px-3 sm:px-4 text-xs sm:text-sm tracking-wider font-bold rounded-xl transition-all flex items-center justify-center gap-2 uppercase border ${
                     txType === 'withdraw' 
-                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-[0_0_15px_rgba(244,63,94,0.2)]' 
-                      : 'text-gray-500 hover:text-white'
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.25)] ring-1 ring-rose-500/30' 
+                      : 'bg-[#050608] border-white/10 text-gray-400 hover:text-white hover:border-white/20'
                   }`}
                 >
-                  <ArrowUpRight size={13} /> Withdraw (-)
+                  <ArrowUpRight size={16} className={txType === 'withdraw' ? 'text-rose-400' : 'text-gray-500'} /> 
+                  <span>Withdraw (-)</span>
                 </button>
               </div>
             </div>
             
             <div>
-              <label className="text-[9.5px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">Klasifikasi Aset</label>
+              <label className="text-[11px] uppercase tracking-widest text-gray-400 font-bold mb-2 block">
+                Klasifikasi Aset
+              </label>
               <select 
                 value={assetType} 
                 onChange={(e) => setAssetType(e.target.value as any)} 
-                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-amber-500/60 shadow-inner"
+                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner h-[48px]"
               >
                 <option value="barang">Aset Fisik / Item Brankas</option>
                 <option value="uang_merah">Kas Uang Merah (Dirty Money)</option>
@@ -227,11 +233,13 @@ export default function TransaksiPage() {
 
           {assetType === 'barang' && (
             <div className="animate-in slide-in-from-top-2 duration-200">
-              <label className="text-[9.5px] uppercase tracking-widest text-amber-400/90 font-bold mb-1.5 block">Pilih Aset Fisik</label>
+              <label className="text-[11px] uppercase tracking-widest text-amber-400/90 font-bold mb-2 block">
+                Pilih Aset Fisik
+              </label>
               <select 
                 value={selectedItemId} 
                 onChange={(e) => setSelectedItemId(e.target.value)} 
-                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-amber-500/60 shadow-inner"
+                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner"
               >
                 <option value="">-- Buka Katalog Brankas --</option>
                 {(items || []).filter(i => i && i.id).map(i => (
@@ -243,13 +251,13 @@ export default function TransaksiPage() {
 
           {assetType === 'uang_putih' && (
             <div className="animate-in slide-in-from-top-2 duration-200">
-              <label className="text-[9.5px] uppercase tracking-widest text-amber-400/90 font-bold mb-1.5 block">
+              <label className="text-[11px] uppercase tracking-widest text-amber-400/90 font-bold mb-2 block">
                 Pilih Rekening Kas Admin (Uang Putih Sindikat)
               </label>
               <select 
                 value={selectedAdminId} 
                 onChange={(e) => setSelectedAdminId(e.target.value)} 
-                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-amber-500/60 shadow-inner"
+                className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 text-xs sm:text-sm focus:outline-none focus:border-amber-500/60 shadow-inner"
               >
                 {eligibleAccounts.map(a => (
                   <option key={a.id} value={a.id}>
@@ -261,25 +269,29 @@ export default function TransaksiPage() {
           )}
 
           <div>
-            <label className="text-[9.5px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">Kuantitas / Jumlah Nominal</label>
+            <label className="text-[11px] uppercase tracking-widest text-gray-400 font-bold mb-2 block">
+              Kuantitas / Jumlah Nominal
+            </label>
             <input 
               type="number" 
               min="1"
               value={amount} 
               onChange={(e) => setAmount(e.target.value)} 
-              className="w-full bg-[#050608] border border-white/10 text-white font-mono-tech text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-500/60 shadow-inner placeholder:text-gray-700" 
+              className="w-full bg-[#050608] border border-white/10 text-white font-mono-tech text-sm sm:text-base rounded-xl px-4 py-3 focus:outline-none focus:border-amber-500/60 shadow-inner placeholder:text-gray-700" 
               placeholder="0"
               required 
             />
           </div>
 
           <div>
-            <label className="text-[9.5px] uppercase tracking-widest text-gray-400 font-bold mb-1.5 block">Keterangan / Berita Acara (Opsional)</label>
+            <label className="text-[11px] uppercase tracking-widest text-gray-400 font-bold mb-2 block">
+              Keterangan / Berita Acara (Opsional)
+            </label>
             <input 
               type="text" 
               value={note} 
               onChange={(e) => setNote(e.target.value)} 
-              className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-500/60 shadow-inner placeholder:text-gray-700 text-xs" 
+              className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-amber-500/60 shadow-inner placeholder:text-gray-700 text-xs sm:text-sm" 
               placeholder="cth. Operasi Pelabuhan, Pemasukan Narkotika, dll." 
             />
           </div>
@@ -287,7 +299,7 @@ export default function TransaksiPage() {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full glow-gold-btn font-display font-bold py-3 rounded-xl uppercase tracking-wider text-xs border border-amber-400/30 transition-all disabled:opacity-50"
+            className="w-full glow-gold-btn font-display font-bold py-3.5 sm:py-4 rounded-xl uppercase tracking-wider text-xs sm:text-sm border border-amber-400/30 transition-all disabled:opacity-50 mt-2"
           >
             {loading ? 'Menyinkronkan Ledger...' : 'Otorisasi & Eksekusi Mutasi'}
           </button>
