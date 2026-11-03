@@ -17,7 +17,8 @@ import {
   History,
   Zap,
   User as UserIcon,
-  BadgeAlert
+  BadgeAlert,
+  CreditCard
 } from 'lucide-react';
 import { useGang, getTxMillis, Transaction } from '@/lib/GangContext';
 import { formatMoney } from '@/lib/firebase';
@@ -170,6 +171,66 @@ export default function ValidasiTransaksiPage() {
 
     // Seluruh item fisik / aset brankas / mutasi non-merah OTOMATIS Uang Putih
     return 'Uang Putih';
+  };
+
+  const getTxAccountName = (tx: any): string => {
+    if (!tx) return '-';
+
+    const isWhite = 
+      tx.paymentMethod === 'uang_putih' || 
+      tx.asset === 'uang_putih' || 
+      (typeof tx.details === 'string' && tx.details.toLowerCase().includes('uang putih')) ||
+      (typeof tx.note === 'string' && (tx.note.toLowerCase().includes('uang putih') || tx.note.toLowerCase().includes('rek:')));
+
+    if (!isWhite) return '-';
+
+    // 1. Cek explicit targetAdminId atau tag [id:...]
+    const targetId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+    if (targetId) {
+      const found = users?.find(u => 
+        u.id === targetId || 
+        (u.username || '').replace('@', '').toLowerCase() === targetId.replace('@', '').toLowerCase()
+      );
+      if (found) return found.icName || found.username.replace('@', '');
+    }
+
+    // 2. Cek regex dari note atau details
+    const combined = `${tx.details || ''} ${tx.note || ''}`;
+    const match = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
+                  combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim();
+    if (match) {
+      const clean = match.replace('@', '').trim().toLowerCase();
+      const found = users?.find(u => 
+        (u.username || '').replace('@', '').toLowerCase() === clean ||
+        (u.icName || '').toLowerCase() === clean ||
+        u.id === match
+      );
+      if (found) return found.icName || found.username.replace('@', '');
+      return match.replace('@', '');
+    }
+
+    // 3. Fallback jika ada admin
+    const defaultAdmin = users?.find(u => u.role === 'admin' && u.status === 'approved') || users?.find(u => u.role === 'admin');
+    if (defaultAdmin) {
+      return defaultAdmin.icName || defaultAdmin.username.replace('@', '');
+    }
+
+    return '-';
+  };
+
+  const getCleanNote = (tx: any): string => {
+    if (!tx) return 'Tanpa keterangan';
+    const clean = (tx.note || '')
+      .replace(/\[id:[^\]]+\]/g, '')
+      .replace(/\(Rek:\s*[^\)]+\)/gi, '')
+      .replace(/Rek:\s*@?[^\s\,\-\|]+/gi, '')
+      .replace(/@(\w+)/g, (_: any, u: string) => getUserIcName(u))
+      .trim();
+    
+    if (clean && clean !== '-' && clean !== '()') return clean;
+    if (tx.type === 'SHOP_PURCHASE') return 'Pembelian Toko Internal';
+    if (tx.asset === 'uang_putih') return tx.type === 'DEPOSIT' ? 'Setoran Kas Uang Putih' : 'Penarikan Kas Uang Putih';
+    return 'Tanpa keterangan';
   };
 
   const formatDate = (item: any) => {
@@ -404,13 +465,14 @@ export default function ValidasiTransaksiPage() {
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9px]">Total Nilai</th>
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9px]">Status</th>
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9px]">Keterangan</th>
+                <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9px]">Nama Rekening</th>
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9px] text-right">Tindakan Otoritas</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.06]">
               {filteredTx.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12 text-gray-500">
+                  <td colSpan={10} className="text-center py-12 text-gray-500">
                     <ShieldCheck size={32} className="mx-auto mb-1.5 opacity-30 text-amber-400" />
                     <p className="font-display font-bold text-xs text-gray-300">Tidak Ada Antrian Transaksi</p>
                     <p className="text-[10px] text-gray-500 mt-0.5">
@@ -575,17 +637,29 @@ export default function ValidasiTransaksiPage() {
 
                       {/* Keterangan / Berita Acara */}
                       <td className="px-3.5 py-2 max-w-[220px] text-[11px]" title={tx.note}>
-                        {tx.note ? (
-                          <span className={`inline-block px-2 py-0.5 rounded-md truncate max-w-[200px] font-medium border ${
-                            isPending 
-                              ? 'text-amber-200/90 bg-amber-500/10 border-amber-500/25 shadow-sm' 
-                              : 'text-gray-300 bg-white/[0.03] border-white/10'
-                          }`}>
-                            {tx.note.replace(/\[id:[^\]]+\]/g, '').replace(/@(\w+)/g, (_, u) => getUserIcName(u)).trim()}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500 italic text-[10px]">Tanpa keterangan</span>
-                        )}
+                        <span className={`inline-block px-2 py-0.5 rounded-md truncate max-w-[200px] font-medium border ${
+                          isPending 
+                            ? 'text-amber-200/90 bg-amber-500/10 border-amber-500/25 shadow-sm' 
+                            : 'text-gray-300 bg-white/[0.03] border-white/10'
+                        }`}>
+                          {getCleanNote(tx)}
+                        </span>
+                      </td>
+
+                      {/* Nama Rekening Kas Admin */}
+                      <td className="px-3.5 py-2">
+                        {(() => {
+                          const accName = getTxAccountName(tx);
+                          if (accName === '-') {
+                            return <span className="text-gray-500 text-[11px] font-mono-tech">-</span>;
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-bold text-[11px] shadow-sm">
+                              <CreditCard size={11} className="text-amber-400" />
+                              <span>{accName}</span>
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* Tindakan Otoritas */}
