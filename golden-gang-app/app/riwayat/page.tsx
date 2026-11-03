@@ -89,9 +89,10 @@ export default function RiwayatPage() {
 
     // 2. Kas Uang Putih
     if (tx.asset === 'uang_putih' || (tx.details && tx.details.toLowerCase().includes('uang putih') && !tx.details.toLowerCase().includes('x)'))) {
-      const rekMatch = tx.details?.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() || 
-                       tx.details?.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() || 
-                       tx.details?.match(/@(\w+)/)?.[1] || '';
+      const combined = `${tx.details || ''} ${tx.note || ''}`;
+      const rekMatch = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() || 
+                       combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() || 
+                       combined.match(/@(\w+)/)?.[1] || '';
       const icAdmin = rekMatch ? getUserIcName(rekMatch) : '';
       const name = icAdmin ? `Kas Uang Putih (${icAdmin})` : (tx.details || 'Kas Uang Putih');
       const amountVal = formatMoney(tx.totalPrice || tx.amount || 0);
@@ -530,7 +531,7 @@ export default function RiwayatPage() {
                         )}
                       </td>
                       <td className="px-3.5 py-2 text-gray-400 max-w-[200px] truncate text-[11px]" title={tx.note}>
-                        {tx.note ? tx.note.replace(/@(\w+)/g, (_, u) => getUserIcName(u)) : 'Tanpa keterangan'}
+                        {tx.note ? tx.note.replace(/\[id:[^\]]+\]/g, '').replace(/@(\w+)/g, (_, u) => getUserIcName(u)).trim() : 'Tanpa keterangan'}
                       </td>
                     </tr>
                   );
