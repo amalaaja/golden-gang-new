@@ -125,23 +125,25 @@ export default function TransaksiPage() {
       }
       else if (assetType === 'uang_putih') {
         const targetAccount = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
+        const targetDisplayName = targetAccount?.icName || targetAccount?.username || 'admin';
         const currentBal = Number(targetAccount?.whiteMoney) || 0;
         if (txType === 'withdraw' && currentBal < qty) {
-          throw new Error(`Saldo Uang Putih pada rekening kas @${targetAccount?.username || 'admin'} (${formatMoney(currentBal)}) tidak mencukupi untuk penarikan ${formatMoney(qty)}`);
+          throw new Error(`Saldo Uang Putih pada rekening kas ${targetDisplayName} (${formatMoney(currentBal)}) tidak mencukupi untuk penarikan ${formatMoney(qty)}`);
         }
-        logDetails = `Kas Uang Putih (@${targetAccount?.username || 'admin'})`;
+        logDetails = `Kas Uang Putih (${targetDisplayName})`;
         paymentMethod = 'uang_putih';
         totalVal = qty;
-        assetLabel = `Kas Uang Putih (@${targetAccount?.username || 'admin'})`;
+        assetLabel = `Kas Uang Putih (${targetDisplayName})`;
 
         // Mutasi Kas Uang Putih WAJIB diverifikasi & di-ACC di menu Validasi Transaksi!
       }
 
       const targetAdmin = eligibleAccounts.find(a => a && a.id === selectedAdminId) || eligibleAccounts[0] || dbUser;
+      const adminDisplayName = targetAdmin?.icName || targetAdmin?.username || 'admin';
 
       addTransaction({
         type: txType === 'deposit' ? 'DEPOSIT' : 'WITHDRAW',
-        user: dbUser?.username || 'member_sindikat',
+        user: dbUser?.icName || dbUser?.username || 'member_sindikat',
         asset: assetType,
         details: logDetails,
         itemQty: qty,
@@ -149,7 +151,7 @@ export default function TransaksiPage() {
         totalPrice: totalVal,
         paymentMethod: paymentMethod,
         note: assetType === 'uang_putih'
-          ? (note ? `${note} (Rek: @${targetAdmin?.username || 'admin'})` : `Rek: @${targetAdmin?.username || 'admin'}`)
+          ? (note ? `${note} (Rek: ${adminDisplayName})` : `Rek: ${adminDisplayName}`)
           : (note || (assetType === 'barang' 
               ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
               : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`))),
@@ -303,7 +305,7 @@ export default function TransaksiPage() {
               >
                 {eligibleAccounts.map(a => (
                   <option key={a.id} value={a.id}>
-                    Rekening Kas Admin @{a.username}{a.id === dbUser?.id ? ' (Akun Saya)' : ''} - {formatMoney(a.whiteMoney)}
+                    Rekening Kas Admin {a.icName || a.username}{a.id === dbUser?.id ? ' (Akun Saya)' : ''} - {formatMoney(a.whiteMoney)}
                   </option>
                 ))}
               </select>
