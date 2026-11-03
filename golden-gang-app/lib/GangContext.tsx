@@ -546,10 +546,13 @@ export function GangProvider({ children }: { children: ReactNode }) {
         if (isMounted && suTx && Array.isArray(suTx)) {
           const mappedTx: Transaction[] = suTx.map(t => {
             let detectedAsset = t.asset;
+            const detailsText = String(t.details || t.items || '');
+            const hasQtyParen = Boolean(detailsText.match(/\(\d+x\)/));
+
             if (!detectedAsset || detectedAsset.includes('(')) {
-              if (t.type === 'SHOP_PURCHASE' || (t.details && t.details.match(/\(\d+x\)/)) || (t.items && t.items.match(/\(\d+x\)/))) {
+              if (t.type === 'SHOP_PURCHASE' || hasQtyParen) {
                 detectedAsset = 'barang';
-              } else if ((t.payment_method || '').toLowerCase() === 'uang_merah' || (t.details || '').toLowerCase().includes('uang merah')) {
+              } else if ((t.payment_method || '').toLowerCase() === 'uang_merah' || detailsText.toLowerCase().includes('uang merah')) {
                 detectedAsset = 'uang_merah';
               } else {
                 detectedAsset = 'uang_putih';
@@ -567,7 +570,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
               items: t.items,
               amount: Number(t.amount) || 0,
               totalPrice: Number(t.total_price ?? t.totalPrice ?? t.amount) || 0,
-              paymentMethod: t.payment_method || t.paymentMethod || 'uang_putih',
+              paymentMethod: t.payment_method || (detectedAsset === 'barang' ? '' : 'uang_putih'),
               status: ((t.status || 'pending').toLowerCase()) as any,
               note: t.note || '',
               timestamp: t.created_at || new Date().toISOString(),
@@ -856,11 +859,13 @@ export function GangProvider({ children }: { children: ReactNode }) {
     const newTx: Transaction = {
       id: docId,
       ...data,
+      items: data.items || data.details || '',
       user: data.user || (dbUser?.role === 'member' ? dbUser.username : 'member_sindikat'),
       timestamp: new Date(now).toISOString(),
       createdAtMs: now,
       status: data.status || 'pending',
-      itemQty: data.itemQty ?? (data.asset === 'barang' ? (Number(data.details?.match(/\((\d+)x\)/)?.[1]) || 1) : 0)
+      itemQty: data.itemQty ?? (data.asset === 'barang' ? (Number(data.details?.match(/\((\d+)x\)/)?.[1]) || 1) : 0),
+      selectedItemId: data.selectedItemId
     };
 
     setTransactions(prev => {
@@ -945,7 +950,11 @@ export function GangProvider({ children }: { children: ReactNode }) {
             let currentStock = Number(currentItem.stock) || 0;
             if (isSupabaseConfigured) {
               try {
-                const { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                if (!suItem && currentItem.name) {
+                  const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
+                  suItem = res.data;
+                }
                 if (suItem && typeof suItem.stock === 'number') {
                   currentStock = Number(suItem.stock);
                 }
@@ -986,7 +995,11 @@ export function GangProvider({ children }: { children: ReactNode }) {
             let currentStock = Number(currentItem.stock) || 0;
             if (isSupabaseConfigured) {
               try {
-                const { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                if (!suItem && currentItem.name) {
+                  const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
+                  suItem = res.data;
+                }
                 if (suItem && typeof suItem.stock === 'number') {
                   currentStock = Number(suItem.stock);
                 }
@@ -1071,22 +1084,25 @@ export function GangProvider({ children }: { children: ReactNode }) {
     }
 
     // Helper deteksi tipe mutasi secara tegas & mutlak
-    const isRedTx = 
+    const detailsStr = String(tx.details || tx.items || '').trim();
+    const hasItemQty = Boolean(detailsStr.match(/\(\d+x\)/));
+    const isItemTx = tx.asset === 'barang' || hasItemQty;
+
+    const isRedTx = !isItemTx && (
       tx.asset === 'uang_merah' || 
       tx.paymentMethod === 'uang_merah' || 
-      (tx.details || '').toLowerCase().includes('uang merah') || 
-      (tx.note || '').toLowerCase().includes('uang merah');
+      detailsStr.toLowerCase().includes('uang merah') || 
+      (tx.note || '').toLowerCase().includes('uang merah')
+    );
 
-    const isWhiteTx = 
-      !isRedTx && (
-        tx.asset === 'uang_putih' || 
-        tx.paymentMethod === 'uang_putih' || 
-        (tx.details || '').toLowerCase().includes('uang putih') || 
-        (tx.note || '').toLowerCase().includes('uang putih') ||
-        (tx.note || '').toLowerCase().includes('rek:')
-      );
-
-    const isItemTx = !isRedTx && !isWhiteTx;
+    const isWhiteTx = !isItemTx && !isRedTx && (
+      tx.asset === 'uang_putih' || 
+      tx.paymentMethod === 'uang_putih' || 
+      detailsStr.toLowerCase().includes('uang putih') || 
+      detailsStr.toLowerCase().includes('kas legal') || 
+      (tx.note || '').toLowerCase().includes('uang putih') || 
+      (tx.note || '').toLowerCase().includes('rek:')
+    );
 
     // 2. Eksekusi Mutasi Deposit Ledger
     if (tx.type === 'DEPOSIT') {
@@ -1094,7 +1110,15 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
       if (isRedTx) {
         // Setor Kas Uang Merah
-        const cur = Number(gangStats?.dirtyMoney) || 0;
+        let cur = Number(gangStats?.dirtyMoney) || 0;
+        if (isSupabaseConfigured) {
+          try {
+            const { data: suStats } = await supabase.from('gang_stats').select('dirty_money').eq('id', 'main').maybeSingle();
+            if (suStats && typeof suStats.dirty_money === 'number') {
+              cur = Number(suStats.dirty_money);
+            }
+          } catch (e) {}
+        }
         await updateDirtyMoney(cur + qty);
       } else if (isWhiteTx) {
         // Setor Uang Putih: Rekening Kas Admin yang dipilih BERTAMBAH!
@@ -1152,26 +1176,42 @@ export function GangProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Setor Barang ke Brankas: Stok bertambah!
-        const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
-        const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
-        const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
+        const match = detailsStr.match(/\((\d+)x\)/);
+        const physicalQty = Number(tx.itemQty || match?.[1]) || 1;
+        const cleanName = detailsStr
+          .replace(/^(setoran|penarikan)\s*(barang\s*)?[-–—:]\s*/i, '')
+          .replace(/\(\d+x\)/g, '')
+          .trim()
+          .toLowerCase();
 
-        const curItem = items.find(i => 
-          (tx.selectedItemId && (i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId))) || 
-          (i.name && (rawName === i.name.toLowerCase() || rawName.includes(i.name.toLowerCase()) || i.name.toLowerCase().includes(rawName)))
-        );
+        let curItem = tx.selectedItemId ? items.find(i => i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId)) : null;
+        if (!curItem) {
+          curItem = items.find(i => (i.name || '').trim().toLowerCase() === cleanName);
+        }
+        if (!curItem) {
+          curItem = items.find(i => {
+            const iName = (i.name || '').trim().toLowerCase();
+            return iName && (cleanName.includes(iName) || iName.includes(cleanName));
+          });
+        }
 
         if (curItem) {
           let currentStock = Number(curItem.stock) || 0;
           if (isSupabaseConfigured) {
             try {
-              const { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              let { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              if (!suItem && curItem.name) {
+                const res = await supabase.from('items').select('stock').ilike('name', curItem.name).maybeSingle();
+                suItem = res.data;
+              }
               if (suItem && typeof suItem.stock === 'number') {
                 currentStock = Number(suItem.stock);
               }
-            } catch (e) {}
+            } catch (e) {
+              console.warn("Fetch fresh stock in deposit err:", e);
+            }
           }
-          const newStock = (Number(currentStock) || 0) + physicalQty;
+          const newStock = currentStock + physicalQty;
           await updateItemStock(curItem.id, newStock);
         }
       }
@@ -1183,7 +1223,15 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
       if (isRedTx) {
         // Tarik Kas Uang Merah
-        const cur = Number(gangStats?.dirtyMoney) || 0;
+        let cur = Number(gangStats?.dirtyMoney) || 0;
+        if (isSupabaseConfigured) {
+          try {
+            const { data: suStats } = await supabase.from('gang_stats').select('dirty_money').eq('id', 'main').maybeSingle();
+            if (suStats && typeof suStats.dirty_money === 'number') {
+              cur = Number(suStats.dirty_money);
+            }
+          } catch (e) {}
+        }
         await updateDirtyMoney(Math.max(0, cur - qty));
       } else if (isWhiteTx) {
         // Tarik Uang Putih: Rekening Kas Admin yang dipilih BERKURANG!
@@ -1241,26 +1289,42 @@ export function GangProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Tarik Barang dari Brankas: Stok berkurang!
-        const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
-        const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
-        const rawName = (tx.details || tx.items || '').replace(/\(\d+x\)/g, '').trim().toLowerCase();
+        const match = detailsStr.match(/\((\d+)x\)/);
+        const physicalQty = Number(tx.itemQty || match?.[1]) || 1;
+        const cleanName = detailsStr
+          .replace(/^(setoran|penarikan)\s*(barang\s*)?[-–—:]\s*/i, '')
+          .replace(/\(\d+x\)/g, '')
+          .trim()
+          .toLowerCase();
 
-        const curItem = items.find(i => 
-          (tx.selectedItemId && (i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId))) || 
-          (i.name && (rawName === i.name.toLowerCase() || rawName.includes(i.name.toLowerCase()) || i.name.toLowerCase().includes(rawName)))
-        );
+        let curItem = tx.selectedItemId ? items.find(i => i.id === tx.selectedItemId || String(i.id) === String(tx.selectedItemId)) : null;
+        if (!curItem) {
+          curItem = items.find(i => (i.name || '').trim().toLowerCase() === cleanName);
+        }
+        if (!curItem) {
+          curItem = items.find(i => {
+            const iName = (i.name || '').trim().toLowerCase();
+            return iName && (cleanName.includes(iName) || iName.includes(cleanName));
+          });
+        }
 
         if (curItem) {
           let currentStock = Number(curItem.stock) || 0;
           if (isSupabaseConfigured) {
             try {
-              const { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              let { data: suItem } = await supabase.from('items').select('stock').eq('id', curItem.id).maybeSingle();
+              if (!suItem && curItem.name) {
+                const res = await supabase.from('items').select('stock').ilike('name', curItem.name).maybeSingle();
+                suItem = res.data;
+              }
               if (suItem && typeof suItem.stock === 'number') {
                 currentStock = Number(suItem.stock);
               }
-            } catch (e) {}
+            } catch (e) {
+              console.warn("Fetch fresh stock in withdraw err:", e);
+            }
           }
-          const newStock = Math.max(0, (Number(currentStock) || 0) - physicalQty);
+          const newStock = Math.max(0, currentStock - physicalQty);
           await updateItemStock(curItem.id, newStock);
         }
       }
@@ -1354,10 +1418,16 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
   const updateItemStock = async (itemId: string, newStock: number) => {
     const updatedStock = Math.max(0, Math.round(Number(newStock) || 0));
-    const targetItem = items.find(i => i.id === itemId);
+    const targetItem = items.find(i => i.id === itemId || (i.name && itemId && i.name.toLowerCase() === itemId.toLowerCase()));
+    const actualId = targetItem?.id || itemId;
+    const itemName = targetItem?.name || '';
 
     setItems(prev => {
-      const updated = prev.map(item => item.id === itemId ? { ...item, stock: updatedStock } : item);
+      const updated = prev.map(item => 
+        (item.id === actualId || (itemName && item.name.toLowerCase() === itemName.toLowerCase())) 
+          ? { ...item, stock: updatedStock } 
+          : item
+      );
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('gang_items', JSON.stringify(updated));
@@ -1366,23 +1436,15 @@ export function GangProvider({ children }: { children: ReactNode }) {
       return updated;
     });
 
-    updateDoc(doc(db, ITEMS_PATH, itemId), { stock: updatedStock }).catch(() => {});
+    updateDoc(doc(db, ITEMS_PATH, actualId), { stock: updatedStock }).catch(() => {});
 
     if (isSupabaseConfigured) {
       try {
-        if (targetItem) {
-          await supabase.from('items').upsert({
-            id: itemId,
-            name: targetItem.name,
-            category: targetItem.category || 'ITEM',
-            vault: targetItem.vault || 'Brankas Utama',
-            stock: updatedStock,
-            in_shop: Boolean(targetItem.inShop),
-            price: Number(targetItem.price) || 0,
-            image: targetItem.image || ''
-          });
-        } else {
-          await supabase.from('items').update({ stock: updatedStock }).eq('id', itemId);
+        if (actualId) {
+          await supabase.from('items').update({ stock: updatedStock }).eq('id', actualId);
+        }
+        if (itemName) {
+          await supabase.from('items').update({ stock: updatedStock }).ilike('name', itemName);
         }
       } catch (err) {
         console.warn("Supabase updateItemStock err:", err);
@@ -1393,7 +1455,7 @@ export function GangProvider({ children }: { children: ReactNode }) {
       await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_item_stock', itemId, newStock: updatedStock })
+        body: JSON.stringify({ action: 'update_item_stock', itemId: actualId, newStock: updatedStock })
       });
     } catch (e) {}
   };
