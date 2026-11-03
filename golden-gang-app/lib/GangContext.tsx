@@ -555,6 +555,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
               }
             }
 
+            const targetAdminIdMatch = (t.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+
             return {
               id: t.id,
               type: t.type,
@@ -570,7 +572,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
               timestamp: t.created_at || new Date().toISOString(),
               createdAtMs: Number(t.created_at_ms) || (t.created_at ? new Date(t.created_at).getTime() : Date.now()),
               approvedBy: t.approved_by,
-              rejectedBy: t.rejected_by
+              rejectedBy: t.rejected_by,
+              targetAdminId: targetAdminIdMatch || t.target_admin_id || undefined
             };
           });
 
@@ -1006,22 +1009,23 @@ export function GangProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Helper untuk mendeteksi tipe aset transaksi (robust & fallback-ready)
-    const isItemTx = 
-      tx.asset === 'barang' || 
-      Boolean((tx.details || tx.items || '').match(/\(\d+x\)/)) || 
-      items.some(i => i.name && (
-        (tx.details && tx.details.toLowerCase().includes(i.name.toLowerCase())) || 
-        (typeof tx.items === 'string' && tx.items.toLowerCase().includes(i.name.toLowerCase()))
-      ));
-
+    // Helper deteksi tipe mutasi secara tegas & mutlak
     const isRedTx = 
-      !isItemTx && (
-        tx.asset === 'uang_merah' || 
-        tx.paymentMethod === 'uang_merah' || 
-        (tx.details || '').toLowerCase().includes('uang merah') || 
-        (tx.note || '').toLowerCase().includes('uang merah')
+      tx.asset === 'uang_merah' || 
+      tx.paymentMethod === 'uang_merah' || 
+      (tx.details || '').toLowerCase().includes('uang merah') || 
+      (tx.note || '').toLowerCase().includes('uang merah');
+
+    const isWhiteTx = 
+      !isRedTx && (
+        tx.asset === 'uang_putih' || 
+        tx.paymentMethod === 'uang_putih' || 
+        (tx.details || '').toLowerCase().includes('uang putih') || 
+        (tx.note || '').toLowerCase().includes('uang putih') ||
+        (tx.note || '').toLowerCase().includes('rek:')
       );
+
+    const isItemTx = !isRedTx && !isWhiteTx;
 
     // 2. Eksekusi Mutasi Deposit Ledger
     if (tx.type === 'DEPOSIT') {
@@ -1031,7 +1035,53 @@ export function GangProvider({ children }: { children: ReactNode }) {
         // Setor Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
         await updateDirtyMoney(cur + qty);
-      } else if (isItemTx) {
+      } else if (isWhiteTx) {
+        // Setor Uang Putih: Rekening Kas Admin yang dipilih BERTAMBAH!
+        const explicitId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+        let targetAdmin = explicitId
+          ? users.find(u => u.id === explicitId || (u.username || '').replace('@', '').toLowerCase() === explicitId.replace('@', '').toLowerCase())
+          : null;
+
+        if (!targetAdmin) {
+          const combinedText = `${tx.details || ''} ${tx.note || ''}`;
+          const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
+                                combinedText.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() ||
+                                combinedText.match(/@(\w+)/)?.[1];
+          if (rekAdminMatch) {
+            const clean = rekAdminMatch.toLowerCase();
+            targetAdmin = users.find(u => 
+              (u.username || '').replace('@', '').toLowerCase() === clean ||
+              (u.icName || '').toLowerCase() === clean ||
+              u.id === rekAdminMatch
+            );
+          }
+        }
+
+        if (!targetAdmin) {
+          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
+        }
+
+        if (targetAdmin) {
+          let currentBalance = Number(targetAdmin.whiteMoney) || 0;
+          if (isSupabaseConfigured) {
+            try {
+              let suQuery = supabase.from('users').select('id, username, white_money');
+              if (targetAdmin.id) {
+                suQuery = suQuery.or(`id.eq.${targetAdmin.id},username.ilike.${targetAdmin.username}`);
+              } else {
+                suQuery = suQuery.ilike('username', targetAdmin.username);
+              }
+              const { data: suUser } = await suQuery.maybeSingle();
+              if (suUser && typeof suUser.white_money === 'number') {
+                currentBalance = Number(suUser.white_money);
+              }
+            } catch (e) {
+              console.warn("Fetch fresh white_money err:", e);
+            }
+          }
+          await updateWhiteMoney(targetAdmin.id, currentBalance + qty);
+        }
+      } else {
         // Setor Barang ke Brankas: Stok bertambah!
         const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
         const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
@@ -1055,35 +1105,6 @@ export function GangProvider({ children }: { children: ReactNode }) {
           const newStock = (Number(currentStock) || 0) + physicalQty;
           await updateItemStock(curItem.id, newStock);
         }
-      } else {
-        // Setor Uang Putih: Rekening Kas Admin yang dipilih BERTAMBAH!
-        const combinedText = `${tx.details || ''} ${tx.note || ''}`;
-        const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() ||
-                              combinedText.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() ||
-                              combinedText.match(/@(\w+)/)?.[1];
-        
-        let targetAdmin = rekAdminMatch 
-          ? users.find(u => 
-              (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() ||
-              (u.icName || '').toLowerCase() === rekAdminMatch.toLowerCase()
-            )
-          : null;
-
-        if (!targetAdmin && tx.targetAdminId) {
-          targetAdmin = users.find(u => 
-            u.id === tx.targetAdminId || 
-            (u.username || '').replace('@', '').toLowerCase() === String(tx.targetAdminId).replace('@', '').toLowerCase()
-          );
-        }
-
-        if (!targetAdmin) {
-          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
-        }
-
-        if (targetAdmin) {
-          const cur = Number(targetAdmin.whiteMoney) || 0;
-          await updateWhiteMoney(targetAdmin.id, cur + qty);
-        }
       }
     }
 
@@ -1095,7 +1116,53 @@ export function GangProvider({ children }: { children: ReactNode }) {
         // Tarik Kas Uang Merah
         const cur = Number(gangStats?.dirtyMoney) || 0;
         await updateDirtyMoney(Math.max(0, cur - qty));
-      } else if (isItemTx) {
+      } else if (isWhiteTx) {
+        // Tarik Uang Putih: Rekening Kas Admin yang dipilih BERKURANG!
+        const explicitId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+        let targetAdmin = explicitId
+          ? users.find(u => u.id === explicitId || (u.username || '').replace('@', '').toLowerCase() === explicitId.replace('@', '').toLowerCase())
+          : null;
+
+        if (!targetAdmin) {
+          const combinedText = `${tx.details || ''} ${tx.note || ''}`;
+          const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
+                                combinedText.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() ||
+                                combinedText.match(/@(\w+)/)?.[1];
+          if (rekAdminMatch) {
+            const clean = rekAdminMatch.toLowerCase();
+            targetAdmin = users.find(u => 
+              (u.username || '').replace('@', '').toLowerCase() === clean ||
+              (u.icName || '').toLowerCase() === clean ||
+              u.id === rekAdminMatch
+            );
+          }
+        }
+
+        if (!targetAdmin) {
+          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
+        }
+
+        if (targetAdmin) {
+          let currentBalance = Number(targetAdmin.whiteMoney) || 0;
+          if (isSupabaseConfigured) {
+            try {
+              let suQuery = supabase.from('users').select('id, username, white_money');
+              if (targetAdmin.id) {
+                suQuery = suQuery.or(`id.eq.${targetAdmin.id},username.ilike.${targetAdmin.username}`);
+              } else {
+                suQuery = suQuery.ilike('username', targetAdmin.username);
+              }
+              const { data: suUser } = await suQuery.maybeSingle();
+              if (suUser && typeof suUser.white_money === 'number') {
+                currentBalance = Number(suUser.white_money);
+              }
+            } catch (e) {
+              console.warn("Fetch fresh white_money err:", e);
+            }
+          }
+          await updateWhiteMoney(targetAdmin.id, Math.max(0, currentBalance - qty));
+        }
+      } else {
         // Tarik Barang dari Brankas: Stok berkurang!
         const matchQty = (tx.details || tx.items || '').match(/\((\d+)x\)/)?.[1];
         const physicalQty = Number(tx.itemQty ?? matchQty) || 1;
@@ -1118,35 +1185,6 @@ export function GangProvider({ children }: { children: ReactNode }) {
           }
           const newStock = Math.max(0, (Number(currentStock) || 0) - physicalQty);
           await updateItemStock(curItem.id, newStock);
-        }
-      } else {
-        // Tarik Uang Putih: Rekening Kas Admin yang dipilih BERKURANG!
-        const combinedText = `${tx.details || ''} ${tx.note || ''}`;
-        const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() ||
-                              combinedText.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() ||
-                              combinedText.match(/@(\w+)/)?.[1];
-        
-        let targetAdmin = rekAdminMatch 
-          ? users.find(u => 
-              (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() ||
-              (u.icName || '').toLowerCase() === rekAdminMatch.toLowerCase()
-            )
-          : null;
-
-        if (!targetAdmin && tx.targetAdminId) {
-          targetAdmin = users.find(u => 
-            u.id === tx.targetAdminId || 
-            (u.username || '').replace('@', '').toLowerCase() === String(tx.targetAdminId).replace('@', '').toLowerCase()
-          );
-        }
-
-        if (!targetAdmin) {
-          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
-        }
-
-        if (targetAdmin) {
-          const cur = Number(targetAdmin.whiteMoney) || 0;
-          await updateWhiteMoney(targetAdmin.id, Math.max(0, cur - qty));
         }
       }
     }
@@ -1612,13 +1650,22 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     const targetUser = users.find(u => 
       (u.id && u.id === cleanId) || 
-      (u.username && u.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase())
-    ) || (dbUser && (dbUser.id === cleanId || dbUser.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase()) ? dbUser : null);
+      (u.username && u.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase()) ||
+      (u.icName && u.icName.toLowerCase() === cleanId.toLowerCase())
+    ) || (dbUser && (
+      dbUser.id === cleanId || 
+      dbUser.username.replace('@', '').toLowerCase() === cleanId.replace('@', '').toLowerCase() ||
+      (dbUser.icName && dbUser.icName.toLowerCase() === cleanId.toLowerCase())
+    ) ? dbUser : null);
 
     const actualId = targetUser?.id || cleanId;
     const actualUsername = (targetUser?.username || cleanId).replace('@', '');
 
-    if (dbUser && (dbUser.id === actualId || dbUser.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) {
+    if (dbUser && (
+      dbUser.id === actualId || 
+      dbUser.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase() ||
+      (targetUser && dbUser.id === targetUser.id)
+    )) {
       setDbUser(prev => prev ? ({ ...prev, whiteMoney: finalAmount }) : null);
       if (typeof window !== 'undefined') {
         try {
