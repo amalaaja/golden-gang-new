@@ -216,13 +216,15 @@ export default function RiwayatPage() {
 
   const getCleanNote = (tx: any): string => {
     if (!tx) return 'Tanpa keterangan';
-    const clean = (tx.note || '')
+    let clean = (tx.note || '')
       .replace(/\[id:[^\]]+\]/g, '')
       .replace(/\(Rek:\s*[^\)]+\)/gi, '')
       .replace(/Rek:\s*@?[^\s\,\-\|]+/gi, '')
       .replace(/@(\w+)/g, (_: any, u: string) => getUserIcName(u))
       .trim();
-    
+
+    clean = clean.replace(/[-–—\s\(\)]+$/g, '').trim();
+
     if (clean && clean !== '-' && clean !== '()') return clean;
     if (tx.type === 'SHOP_PURCHASE') return 'Pembelian Toko Internal';
     if (tx.asset === 'uang_putih') return tx.type === 'DEPOSIT' ? 'Setoran Kas Uang Putih' : 'Penarikan Kas Uang Putih';
