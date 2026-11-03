@@ -501,7 +501,8 @@ export function GangProvider({ children }: { children: ReactNode }) {
             if (!prev) return null;
             const fresh = mappedUsers.find(u => 
               (u.id && prev.id && u.id === prev.id) || 
-              (u.username.toLowerCase() === prev.username.toLowerCase())
+              (u.username.replace('@', '').toLowerCase() === prev.username.replace('@', '').toLowerCase()) ||
+              (u.icName && prev.icName && u.icName.toLowerCase() === prev.icName.toLowerCase())
             );
             if (fresh && (prev.role !== fresh.role || prev.status !== fresh.status || prev.whiteMoney !== fresh.whiteMoney)) {
               const updatedUser = { ...prev, ...fresh };
@@ -1042,13 +1043,21 @@ export function GangProvider({ children }: { children: ReactNode }) {
           let currentBalance = Number(targetAdmin.whiteMoney) || 0;
           if (isSupabaseConfigured) {
             try {
-              let suQuery = supabase.from('users').select('id, username, white_money');
+              let suUser = null;
               if (targetAdmin.id) {
-                suQuery = suQuery.or(`id.eq.${targetAdmin.id},username.ilike.${targetAdmin.username}`);
-              } else {
-                suQuery = suQuery.ilike('username', targetAdmin.username);
+                const res = await supabase.from('users').select('id, username, white_money').eq('id', targetAdmin.id).maybeSingle();
+                if (res?.data) suUser = res.data;
               }
-              const { data: suUser } = await suQuery.maybeSingle();
+              if (!suUser && targetAdmin.username) {
+                const cleanU = targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('username', cleanU).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
+              if (!suUser && (targetAdmin.icName || targetAdmin.username)) {
+                const cleanN = targetAdmin.icName || targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('ic_name', cleanN).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
               if (suUser && typeof suUser.white_money === 'number') {
                 currentBalance = Number(suUser.white_money);
               }
@@ -1057,26 +1066,6 @@ export function GangProvider({ children }: { children: ReactNode }) {
             }
           }
           await updateWhiteMoney(targetAdmin.id, currentBalance + totalCost);
-        }
-
-        // 2. Jika pembeli adalah member (bukan admin penerima rekening), potong saldo pembeli jika punya saldo
-        const buyer = users.find(u => 
-          (u.username || '').replace('@', '').toLowerCase() === (tx.user || '').replace('@', '').toLowerCase() ||
-          (u.icName || '').toLowerCase() === (tx.user || '').toLowerCase()
-        );
-        if (buyer && targetAdmin && buyer.id !== targetAdmin.id) {
-          let curBuyerWhite = Number(buyer.whiteMoney) || 0;
-          if (isSupabaseConfigured) {
-            try {
-              const { data: suBuyer } = await supabase.from('users').select('white_money').eq('id', buyer.id).maybeSingle();
-              if (suBuyer && typeof suBuyer.white_money === 'number') {
-                curBuyerWhite = Number(suBuyer.white_money);
-              }
-            } catch (e) {}
-          }
-          if (curBuyerWhite >= totalCost) {
-            await updateWhiteMoney(buyer.id, Math.max(0, curBuyerWhite - totalCost));
-          }
         }
       }
     }
@@ -1137,18 +1126,26 @@ export function GangProvider({ children }: { children: ReactNode }) {
           let currentBalance = Number(targetAdmin.whiteMoney) || 0;
           if (isSupabaseConfigured) {
             try {
-              let suQuery = supabase.from('users').select('id, username, white_money');
+              let suUser = null;
               if (targetAdmin.id) {
-                suQuery = suQuery.or(`id.eq.${targetAdmin.id},username.ilike.${targetAdmin.username}`);
-              } else {
-                suQuery = suQuery.ilike('username', targetAdmin.username);
+                const res = await supabase.from('users').select('id, username, white_money').eq('id', targetAdmin.id).maybeSingle();
+                if (res?.data) suUser = res.data;
               }
-              const { data: suUser } = await suQuery.maybeSingle();
+              if (!suUser && targetAdmin.username) {
+                const cleanU = targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('username', cleanU).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
+              if (!suUser && (targetAdmin.icName || targetAdmin.username)) {
+                const cleanN = targetAdmin.icName || targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('ic_name', cleanN).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
               if (suUser && typeof suUser.white_money === 'number') {
                 currentBalance = Number(suUser.white_money);
               }
             } catch (e) {
-              console.warn("Fetch fresh white_money err:", e);
+              console.warn("Fetch fresh white_money in deposit err:", e);
             }
           }
           await updateWhiteMoney(targetAdmin.id, currentBalance + qty);
@@ -1218,18 +1215,26 @@ export function GangProvider({ children }: { children: ReactNode }) {
           let currentBalance = Number(targetAdmin.whiteMoney) || 0;
           if (isSupabaseConfigured) {
             try {
-              let suQuery = supabase.from('users').select('id, username, white_money');
+              let suUser = null;
               if (targetAdmin.id) {
-                suQuery = suQuery.or(`id.eq.${targetAdmin.id},username.ilike.${targetAdmin.username}`);
-              } else {
-                suQuery = suQuery.ilike('username', targetAdmin.username);
+                const res = await supabase.from('users').select('id, username, white_money').eq('id', targetAdmin.id).maybeSingle();
+                if (res?.data) suUser = res.data;
               }
-              const { data: suUser } = await suQuery.maybeSingle();
+              if (!suUser && targetAdmin.username) {
+                const cleanU = targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('username', cleanU).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
+              if (!suUser && (targetAdmin.icName || targetAdmin.username)) {
+                const cleanN = targetAdmin.icName || targetAdmin.username.replace('@', '');
+                const res = await supabase.from('users').select('id, username, white_money').ilike('ic_name', cleanN).maybeSingle();
+                if (res?.data) suUser = res.data;
+              }
               if (suUser && typeof suUser.white_money === 'number') {
                 currentBalance = Number(suUser.white_money);
               }
             } catch (e) {
-              console.warn("Fetch fresh white_money err:", e);
+              console.warn("Fetch fresh white_money in withdraw err:", e);
             }
           }
           await updateWhiteMoney(targetAdmin.id, Math.max(0, currentBalance - qty));
@@ -1732,10 +1737,12 @@ export function GangProvider({ children }: { children: ReactNode }) {
 
     const actualId = targetUser?.id || cleanId;
     const actualUsername = (targetUser?.username || cleanId).replace('@', '');
+    const actualIcName = targetUser?.icName || '';
 
     if (dbUser && (
       dbUser.id === actualId || 
       dbUser.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase() ||
+      (actualIcName && dbUser.icName && dbUser.icName.toLowerCase() === actualIcName.toLowerCase()) ||
       (targetUser && dbUser.id === targetUser.id)
     )) {
       setDbUser(prev => prev ? ({ ...prev, whiteMoney: finalAmount }) : null);
@@ -1751,11 +1758,21 @@ export function GangProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setUsers(prev => prev.map(u => 
-      (u.id === actualId || (u.username && u.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase())) 
-        ? { ...u, whiteMoney: finalAmount } 
-        : u
-    ));
+    setUsers(prev => {
+      const next = prev.map(u => 
+        (u.id === actualId || 
+         (u.username && u.username.replace('@', '').toLowerCase() === actualUsername.toLowerCase()) ||
+         (actualIcName && u.icName && u.icName.toLowerCase() === actualIcName.toLowerCase()))
+          ? { ...u, whiteMoney: finalAmount } 
+          : u
+      );
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_all_users', JSON.stringify(next));
+        } catch (e) {}
+      }
+      return next;
+    });
 
     if (actualId) {
       updateDoc(doc(db, USERS_PATH, actualId), { whiteMoney: finalAmount }).catch(() => {});
@@ -1768,6 +1785,9 @@ export function GangProvider({ children }: { children: ReactNode }) {
           if (actualUsername) {
             await supabase.from('users').update({ white_money: finalAmount }).ilike('username', actualUsername);
             await supabase.from('users').update({ white_money: finalAmount }).ilike('username', `@${actualUsername}`);
+          }
+          if (actualIcName) {
+            await supabase.from('users').update({ white_money: finalAmount }).ilike('ic_name', actualIcName);
           }
         } catch (err) {
           console.warn("Supabase updateWhiteMoney err:", err);
