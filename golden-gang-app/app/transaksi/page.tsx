@@ -94,11 +94,13 @@ export default function TransaksiPage() {
       let paymentMethod = '';
       let totalVal = 0;
       let assetLabel = 'Aset';
+      let chosenItemId = '';
 
       if (assetType === 'barang') {
         const validItems = items || [];
         const item = validItems.find(i => i && i.id === selectedItemId) || validItems[0];
         if (!item) throw new Error("Pilih barang dari katalog terlebih dahulu");
+        chosenItemId = item.id;
         
         const currentStock = Number(item.stock) || 0;
         if (txType === 'withdraw' && currentStock < qty) {
@@ -157,8 +159,8 @@ export default function TransaksiPage() {
               : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`))),
         createdAtMs: Date.now(),
         status: 'pending',
-        selectedItemId: selectedItemId || items[0]?.id,
-        targetAdminId: targetAdmin?.id || dbUser?.id
+        selectedItemId: assetType === 'barang' ? (chosenItemId || selectedItemId) : undefined,
+        targetAdminId: assetType === 'uang_putih' ? (targetAdmin?.id || dbUser?.id) : undefined
       });
 
       setMsg({ 
