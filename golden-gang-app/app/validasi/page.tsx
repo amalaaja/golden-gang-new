@@ -93,9 +93,10 @@ export default function ValidasiTransaksiPage() {
 
     // 2. Kas Uang Putih
     if (tx.asset === 'uang_putih' || (tx.details && tx.details.toLowerCase().includes('uang putih') && !tx.details.toLowerCase().includes('x)'))) {
-      const rekMatch = tx.details?.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() || 
-                       tx.details?.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() || 
-                       tx.details?.match(/@(\w+)/)?.[1] || '';
+      const combined = `${tx.details || ''} ${tx.note || ''}`;
+      const rekMatch = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() || 
+                       combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() || 
+                       combined.match(/@(\w+)/)?.[1] || '';
       const icAdmin = rekMatch ? getUserIcName(rekMatch) : '';
       const name = icAdmin ? `Kas Uang Putih (${icAdmin})` : (tx.details || 'Kas Uang Putih');
       const amountVal = formatMoney(tx.totalPrice || tx.amount || 0);
@@ -580,7 +581,7 @@ export default function ValidasiTransaksiPage() {
                               ? 'text-amber-200/90 bg-amber-500/10 border-amber-500/25 shadow-sm' 
                               : 'text-gray-300 bg-white/[0.03] border-white/10'
                           }`}>
-                            {tx.note.replace(/@(\w+)/g, (_, u) => getUserIcName(u))}
+                            {tx.note.replace(/\[id:[^\]]+\]/g, '').replace(/@(\w+)/g, (_, u) => getUserIcName(u)).trim()}
                           </span>
                         ) : (
                           <span className="text-gray-500 italic text-[10px]">Tanpa keterangan</span>
