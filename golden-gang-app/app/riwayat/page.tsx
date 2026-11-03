@@ -38,9 +38,23 @@ export default function RiwayatPage() {
     if (!username) return 'MEMBER';
     const cleanName = username.replace('@', '').toLowerCase();
     if (cleanName === 'alvaro' || cleanName === 'goldenboss') return 'ADMIN';
-    const found = users?.find(u => (u?.username || '').toLowerCase() === cleanName);
+    const found = users?.find(u => 
+      (u?.username || '').toLowerCase() === cleanName ||
+      (u?.icName || '').toLowerCase() === cleanName
+    );
     if (found && found.role === 'admin') return 'ADMIN';
     return 'MEMBER';
+  };
+
+  const getUserIcName = (identifier?: string): string => {
+    if (!identifier) return 'Member';
+    const clean = identifier.replace('@', '').toLowerCase().trim();
+    const found = users?.find(u => 
+      (u?.username || '').toLowerCase() === clean || 
+      (u?.icName || '').toLowerCase() === clean ||
+      u?.id === identifier
+    );
+    return found?.icName || identifier.replace('@', '');
   };
 
   const getTxItemLabel = (tx: any): string => {
@@ -75,8 +89,11 @@ export default function RiwayatPage() {
 
     // 2. Kas Uang Putih
     if (tx.asset === 'uang_putih' || (tx.details && tx.details.toLowerCase().includes('uang putih') && !tx.details.toLowerCase().includes('x)'))) {
-      const rekMatch = tx.details?.match(/Rek:\s*(@\w+)/i)?.[1] || tx.details?.match(/\((@\w+)\)/i)?.[1] || '';
-      const name = rekMatch ? `Kas Uang Putih (${rekMatch})` : (tx.details || 'Kas Uang Putih');
+      const rekMatch = tx.details?.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() || 
+                       tx.details?.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() || 
+                       tx.details?.match(/@(\w+)/)?.[1] || '';
+      const icAdmin = rekMatch ? getUserIcName(rekMatch) : '';
+      const name = icAdmin ? `Kas Uang Putih (${icAdmin})` : (tx.details || 'Kas Uang Putih');
       const amountVal = formatMoney(tx.totalPrice || tx.amount || 0);
       return {
         assetName: name,
@@ -187,7 +204,8 @@ export default function RiwayatPage() {
           if (!t) return false;
           const u1 = (t.user || '').replace('@', '').toLowerCase();
           const u2 = (dbUser?.username || '').replace('@', '').toLowerCase();
-          return u1 === u2;
+          const ic = (dbUser?.icName || '').toLowerCase();
+          return u1 === u2 || (ic && u1 === ic);
         })
   );
 
@@ -410,21 +428,26 @@ export default function RiwayatPage() {
                         </div>
                       </td>
                       <td className="px-3.5 py-2">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-5 h-5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[9px]">
-                            {operatorName.charAt(0).toUpperCase()}
-                          </div>
-                          <span className="text-gray-200 font-bold text-xs">@{operatorName}</span>
-                          {getUserRole(operatorName) === 'ADMIN' ? (
-                            <span className="text-[8.5px] bg-amber-500/15 border border-amber-500/35 text-amber-400 px-1.5 py-0.2 rounded-full uppercase font-extrabold tracking-wider">
-                              ADMIN
-                            </span>
-                          ) : (
-                            <span className="text-[8.5px] bg-blue-500/15 border border-blue-500/35 text-blue-400 px-1.5 py-0.2 rounded-full uppercase font-extrabold tracking-wider">
-                              MEMBER
-                            </span>
-                          )}
-                        </div>
+                        {(() => {
+                          const icName = getUserIcName(operatorName);
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-5 h-5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[9px]">
+                                {icName.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-gray-200 font-bold text-xs">{icName}</span>
+                              {getUserRole(operatorName) === 'ADMIN' ? (
+                                <span className="text-[8.5px] bg-amber-500/15 border border-amber-500/35 text-amber-400 px-1.5 py-0.2 rounded-full uppercase font-extrabold tracking-wider">
+                                  ADMIN
+                                </span>
+                              ) : (
+                                <span className="text-[8.5px] bg-blue-500/15 border border-blue-500/35 text-blue-400 px-1.5 py-0.2 rounded-full uppercase font-extrabold tracking-wider">
+                                  MEMBER
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-3.5 py-2">
                         {isPurchase && (
@@ -507,7 +530,7 @@ export default function RiwayatPage() {
                         )}
                       </td>
                       <td className="px-3.5 py-2 text-gray-400 max-w-[200px] truncate text-[11px]" title={tx.note}>
-                        {tx.note || 'Tanpa keterangan'}
+                        {tx.note ? tx.note.replace(/@(\w+)/g, (_, u) => getUserIcName(u)) : 'Tanpa keterangan'}
                       </td>
                     </tr>
                   );
