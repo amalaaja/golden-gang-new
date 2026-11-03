@@ -18,7 +18,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  CreditCard
 } from 'lucide-react';
 import { useGang, deduplicateTransactions, getMillis, getTxMillis } from '@/lib/GangContext';
 import { formatMoney } from '@/lib/firebase';
@@ -166,6 +167,66 @@ export default function RiwayatPage() {
     if (full.includes('putih')) return 'Uang Putih';
 
     return 'Uang Putih';
+  };
+
+  const getTxAccountName = (tx: any): string => {
+    if (!tx) return '-';
+
+    const isWhite = 
+      tx.paymentMethod === 'uang_putih' || 
+      tx.asset === 'uang_putih' || 
+      (typeof tx.details === 'string' && tx.details.toLowerCase().includes('uang putih')) ||
+      (typeof tx.note === 'string' && (tx.note.toLowerCase().includes('uang putih') || tx.note.toLowerCase().includes('rek:')));
+
+    if (!isWhite) return '-';
+
+    // 1. Cek explicit targetAdminId atau tag [id:...]
+    const targetId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+    if (targetId) {
+      const found = users?.find(u => 
+        u.id === targetId || 
+        (u.username || '').replace('@', '').toLowerCase() === targetId.replace('@', '').toLowerCase()
+      );
+      if (found) return found.icName || found.username.replace('@', '');
+    }
+
+    // 2. Cek regex dari note atau details
+    const combined = `${tx.details || ''} ${tx.note || ''}`;
+    const match = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
+                  combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim();
+    if (match) {
+      const clean = match.replace('@', '').trim().toLowerCase();
+      const found = users?.find(u => 
+        (u.username || '').replace('@', '').toLowerCase() === clean ||
+        (u.icName || '').toLowerCase() === clean ||
+        u.id === match
+      );
+      if (found) return found.icName || found.username.replace('@', '');
+      return match.replace('@', '');
+    }
+
+    // 3. Fallback jika ada admin
+    const defaultAdmin = users?.find(u => u.role === 'admin' && u.status === 'approved') || users?.find(u => u.role === 'admin');
+    if (defaultAdmin) {
+      return defaultAdmin.icName || defaultAdmin.username.replace('@', '');
+    }
+
+    return '-';
+  };
+
+  const getCleanNote = (tx: any): string => {
+    if (!tx) return 'Tanpa keterangan';
+    const clean = (tx.note || '')
+      .replace(/\[id:[^\]]+\]/g, '')
+      .replace(/\(Rek:\s*[^\)]+\)/gi, '')
+      .replace(/Rek:\s*@?[^\s\,\-\|]+/gi, '')
+      .replace(/@(\w+)/g, (_: any, u: string) => getUserIcName(u))
+      .trim();
+    
+    if (clean && clean !== '-' && clean !== '()') return clean;
+    if (tx.type === 'SHOP_PURCHASE') return 'Pembelian Toko Internal';
+    if (tx.asset === 'uang_putih') return tx.type === 'DEPOSIT' ? 'Setoran Kas Uang Putih' : 'Penarikan Kas Uang Putih';
+    return 'Tanpa keterangan';
   };
 
   useEffect(() => {
@@ -379,12 +440,13 @@ export default function RiwayatPage() {
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9.5px]">Total Nilai</th>
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9.5px]">Status Validasi</th>
                 <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9.5px]">Keterangan</th>
+                <th className="px-3.5 py-2.5 font-bold uppercase tracking-wider text-[9.5px]">Nama Rekening</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.06]">
               {displayedTx.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16 text-gray-500">
+                  <td colSpan={9} className="text-center py-16 text-gray-500">
                     <Clock size={30} className="mx-auto mb-2 opacity-30 text-amber-400" />
                     <p className="font-display font-bold text-xs text-gray-300">Belum Ada Catatan Transaksi yang Di-ACC</p>
                     <p className="text-[10px] text-gray-500 mt-0.5">Setiap transaksi dari Internal Shop atau Ledger yang telah di-ACC Admin akan otomatis masuk dan resmi tercatat di sini.</p>
@@ -531,7 +593,21 @@ export default function RiwayatPage() {
                         )}
                       </td>
                       <td className="px-3.5 py-2 text-gray-400 max-w-[200px] truncate text-[11px]" title={tx.note}>
-                        {tx.note ? tx.note.replace(/\[id:[^\]]+\]/g, '').replace(/@(\w+)/g, (_, u) => getUserIcName(u)).trim() : 'Tanpa keterangan'}
+                        {getCleanNote(tx)}
+                      </td>
+                      <td className="px-3.5 py-2">
+                        {(() => {
+                          const accName = getTxAccountName(tx);
+                          if (accName === '-') {
+                            return <span className="text-gray-500 text-[11px] font-mono-tech">-</span>;
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-bold text-[11px] shadow-sm">
+                              <CreditCard size={11} className="text-amber-400" />
+                              <span>{accName}</span>
+                            </span>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );
