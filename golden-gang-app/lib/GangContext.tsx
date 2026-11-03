@@ -976,9 +976,14 @@ export function GangProvider({ children }: { children: ReactNode }) {
         // 1. Duit di rekening ADMIN tujuan BERTAMBAH (+ totalCost)!
         let targetAdmin = admins.find(a => a.id === tx.targetAdminId);
         if (!targetAdmin) {
-          const rekMatch = (tx.note || tx.details || '').match(/Rek:\s*@?(\w+)/i)?.[1];
+          const rekMatch = (tx.note || tx.details || '').match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() ||
+                           (tx.note || tx.details || '').match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() ||
+                           (tx.note || tx.details || '').match(/@(\w+)/)?.[1];
           if (rekMatch) {
-            targetAdmin = admins.find(a => (a.username || '').replace('@', '').toLowerCase() === rekMatch.toLowerCase());
+            targetAdmin = admins.find(a => 
+              (a.username || '').replace('@', '').toLowerCase() === rekMatch.toLowerCase() ||
+              (a.icName || '').toLowerCase() === rekMatch.toLowerCase()
+            );
           }
         }
         if (!targetAdmin) {
@@ -1053,10 +1058,15 @@ export function GangProvider({ children }: { children: ReactNode }) {
       } else {
         // Setor Uang Putih: Rekening Kas Admin yang dipilih BERTAMBAH!
         const combinedText = `${tx.details || ''} ${tx.note || ''}`;
-        const rekAdminMatch = combinedText.match(/@(\w+)/)?.[1];
+        const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() ||
+                              combinedText.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() ||
+                              combinedText.match(/@(\w+)/)?.[1];
         
         let targetAdmin = rekAdminMatch 
-          ? users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase())
+          ? users.find(u => 
+              (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() ||
+              (u.icName || '').toLowerCase() === rekAdminMatch.toLowerCase()
+            )
           : null;
 
         if (!targetAdmin && tx.targetAdminId) {
@@ -1112,10 +1122,15 @@ export function GangProvider({ children }: { children: ReactNode }) {
       } else {
         // Tarik Uang Putih: Rekening Kas Admin yang dipilih BERKURANG!
         const combinedText = `${tx.details || ''} ${tx.note || ''}`;
-        const rekAdminMatch = combinedText.match(/@(\w+)/)?.[1];
+        const rekAdminMatch = combinedText.match(/Rek:\s*@?([^\)\,\-]+)/i)?.[1]?.trim() ||
+                              combinedText.match(/\(@?([^\)\,\-]+)\)/i)?.[1]?.trim() ||
+                              combinedText.match(/@(\w+)/)?.[1];
         
         let targetAdmin = rekAdminMatch 
-          ? users.find(u => (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase())
+          ? users.find(u => 
+              (u.username || '').replace('@', '').toLowerCase() === rekAdminMatch.toLowerCase() ||
+              (u.icName || '').toLowerCase() === rekAdminMatch.toLowerCase()
+            )
           : null;
 
         if (!targetAdmin && tx.targetAdminId) {
