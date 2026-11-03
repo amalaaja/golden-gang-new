@@ -209,9 +209,9 @@ export default function ShopPage() {
       </div>
 
       {/* Main Grid: Products + Cart Sidebar */}
-      <div className="flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-14rem)]">
+      <div className="flex flex-col lg:flex-row gap-4 items-start">
         {/* Left Side: Product Showcase */}
-        <div className="flex-1 flex flex-col glass-panel rounded-2xl overflow-hidden relative shadow-2xl">
+        <div className="flex-1 w-full flex flex-col glass-panel rounded-2xl overflow-hidden relative shadow-2xl min-h-[calc(100vh-14rem)]">
           {/* Filter & Search Bar */}
           <div className="p-3 border-b border-white/10 flex flex-col sm:flex-row gap-3 justify-between items-center bg-[#0B0D12]/60 relative z-20">
             {/* Category Dropdown (No scrollbar, opens on click) */}
@@ -399,8 +399,8 @@ export default function ShopPage() {
         </div>
 
         {/* Right Side: Modern Shopping Cart Panel */}
-        <div className="w-full lg:w-[420px] glass-panel rounded-3xl flex flex-col flex-shrink-0 relative shadow-2xl border border-white/10">
-          <div className="p-5 border-b border-white/10 bg-[#0B0D12]/70 flex items-center justify-between">
+        <div className="w-full lg:w-[420px] glass-panel rounded-3xl flex flex-col flex-shrink-0 relative shadow-2xl border border-white/10 self-start lg:sticky lg:top-2">
+          <div className="p-4 sm:p-5 border-b border-white/10 bg-[#0B0D12]/70 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-glow-gold">
                 <ShoppingCart size={18} />
@@ -423,10 +423,10 @@ export default function ShopPage() {
           </div>
           
           {/* Cart Item List */}
-          <div className="p-5 space-y-3 max-h-72 lg:max-h-none overflow-y-auto flex-1 custom-scrollbar">
+          <div className="p-4 sm:p-5 space-y-2.5 max-h-60 sm:max-h-72 overflow-y-auto custom-scrollbar">
             {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-gray-600 space-y-2 opacity-60">
-                <ShoppingCart size={40} className="stroke-[1.5]" />
+              <div className="flex flex-col items-center justify-center py-10 text-gray-600 space-y-2 opacity-60">
+                <ShoppingCart size={38} className="stroke-[1.5]" />
                 <p className="text-xs font-bold tracking-widest uppercase">Keranjang Anda Kosong</p>
                 <p className="text-[11px] text-gray-500 text-center max-w-[200px]">Pilih aset dari etalase untuk melakukan transaksi pembelian.</p>
               </div>
@@ -434,7 +434,7 @@ export default function ShopPage() {
               cart.map(item => (
                 <div 
                   key={item.id} 
-                  className="bg-[#090C10] p-3.5 rounded-2xl border border-white/[0.08] flex items-center justify-between gap-3 hover:border-white/20 transition-colors"
+                  className="bg-[#090C10] p-3 rounded-2xl border border-white/[0.08] flex items-center justify-between gap-3 hover:border-white/20 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-gray-100 text-xs font-bold truncate tracking-tight">{item.name}</p>
@@ -444,7 +444,7 @@ export default function ShopPage() {
                   </div>
 
                   {/* Modern Stepper Button */}
-                  <div className="flex items-center gap-1.5 bg-[#050608] border border-white/10 rounded-xl p-1">
+                  <div className="flex items-center gap-1 bg-[#050608] border border-white/10 rounded-xl p-1">
                     <button 
                       type="button"
                       onClick={() => changeQty(item.id, -1, item.stock)}
@@ -477,7 +477,7 @@ export default function ShopPage() {
           </div>
 
           {/* Checkout Calculation Footer */}
-          <div className="p-5 border-t border-white/10 bg-[#090C10]/90 mt-auto space-y-4">
+          <div className="p-4 sm:p-5 border-t border-white/10 bg-[#090C10]/95 space-y-4">
             <div className="flex justify-between items-end">
               <div>
                 <span className="text-gray-500 text-[10px] tracking-widest uppercase font-bold block">Total Belanja</span>
