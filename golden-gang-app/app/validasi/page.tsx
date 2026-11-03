@@ -75,7 +75,12 @@ export default function ValidasiTransaksiPage() {
     return '-';
   };
 
-  const getTxAssetAndQty = (tx: any) => {
+  const getTxAssetAndQty = (tx: any): { 
+    assetName: string; 
+    qtyText: string; 
+    isPositive: boolean;
+    itemList?: string[];
+  } => {
     if (!tx) return { assetName: '-', qtyText: '-', isPositive: false };
 
     const isPurchase = tx.type === 'SHOP_PURCHASE';
@@ -99,7 +104,8 @@ export default function ValidasiTransaksiPage() {
                        combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() || 
                        combined.match(/@(\w+)/)?.[1] || '';
       const icAdmin = rekMatch ? getUserIcName(rekMatch) : '';
-      const name = icAdmin ? `Kas Uang Putih (${icAdmin})` : (tx.details || 'Kas Uang Putih');
+      const cleanRaw = (tx.details || 'Kas Uang Putih').replace(/\[id:[^\]]+\]/g, '').trim();
+      const name = icAdmin ? `Kas Uang Putih (${icAdmin})` : cleanRaw;
       const amountVal = formatMoney(tx.totalPrice || tx.amount || 0);
       return {
         assetName: name,
@@ -111,25 +117,48 @@ export default function ValidasiTransaksiPage() {
     // 3. Pembelian Toko Internal (SHOP_PURCHASE)
     if (isPurchase) {
       if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
-        const names = tx.itemsPayload.map((i: any) => i.name || 'Item').join(', ');
+        const itemList = tx.itemsPayload.map((i: any) => `${i.name || 'Item'} (${Number(i.qty) || 1}x)`);
+        const names = itemList.join(', ');
         const totalUnits = tx.itemsPayload.reduce((sum: number, i: any) => sum + (Number(i.qty) || 1), 0);
         return {
           assetName: names,
+          itemList: itemList,
           qtyText: `-${totalUnits}x`,
           isPositive: false
         };
       }
       const raw = tx.details || tx.items || 'Barang Toko';
+      const parts = raw.split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (parts.length > 1) {
+        let totalUnits = 0;
+        const itemList = parts.map((p: string) => {
+          const match = p.match(/^(.*?)\s*\((\d+)x\)$/);
+          if (match) {
+            totalUnits += Number(match[2]) || 1;
+            return `${match[1].trim()} (${match[2]}x)`;
+          }
+          totalUnits += 1;
+          return p;
+        });
+        return {
+          assetName: raw,
+          itemList: itemList,
+          qtyText: `-${totalUnits}x`,
+          isPositive: false
+        };
+      }
       const match = raw.match(/^(.*?)\s*\((\d+)x\)$/);
       if (match) {
         return {
           assetName: match[1].trim(),
+          itemList: [raw],
           qtyText: `-${match[2]}x`,
           isPositive: false
         };
       }
       return {
         assetName: raw.replace(/\(\d+x\)/g, '').trim() || 'Barang Toko',
+        itemList: [raw],
         qtyText: '-1x',
         isPositive: false
       };
@@ -577,10 +606,25 @@ export default function ValidasiTransaksiPage() {
                       {/* Barang / Aset */}
                       {(() => {
                         const parsed = getTxAssetAndQty(tx);
+                        const hasMultiple = parsed.itemList && parsed.itemList.length > 1;
+
                         return (
                           <>
-                            <td className="px-3.5 py-2 text-white font-medium max-w-[200px] truncate text-[11px]" title={parsed.assetName}>
-                              {parsed.assetName}
+                            <td className="px-3.5 py-2 text-white font-medium text-[11px] min-w-[170px] max-w-[280px]">
+                              {hasMultiple ? (
+                                <div className="flex flex-col gap-1 py-0.5 whitespace-normal">
+                                  {parsed.itemList!.map((it, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5 text-gray-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
+                                      <span className="font-semibold text-[11px] leading-tight">{it}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="truncate block font-semibold text-gray-200" title={parsed.assetName}>
+                                  {parsed.assetName}
+                                </span>
+                              )}
                             </td>
                             <td className="px-3.5 py-2 text-center whitespace-nowrap">
                               <span className={`inline-flex items-center gap-0.5 font-mono-tech font-extrabold text-[11px] px-2 py-0.5 rounded-md border shadow-sm ${
@@ -590,6 +634,11 @@ export default function ValidasiTransaksiPage() {
                               }`}>
                                 {parsed.qtyText}
                               </span>
+                              {hasMultiple && (
+                                <span className="block text-[8.5px] text-gray-500 font-sans mt-0.5 uppercase tracking-wider">
+                                  Total Unit
+                                </span>
+                              )}
                             </td>
                           </>
                         );
