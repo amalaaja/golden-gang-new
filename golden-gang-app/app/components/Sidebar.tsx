@@ -241,10 +241,10 @@ export default function Sidebar() {
             <div className="flex items-center justify-between bg-white/[0.04] border border-white/10 p-2.5 rounded-xl mb-2">
               <div className="flex items-center gap-2.5 overflow-hidden">
                 <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs shrink-0">
-                  {(dbUser.username || 'U').charAt(0).toUpperCase()}
+                  {(dbUser.icName || dbUser.username || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="truncate">
-                  <p className="text-xs text-gray-200 font-bold truncate">@{dbUser.username || 'User'}</p>
+                  <p className="text-xs text-gray-200 font-bold truncate">{dbUser.icName || dbUser.username || 'User'}</p>
                   <p className={`text-[9px] uppercase tracking-wider font-bold ${dbUser.role === 'admin' ? 'text-amber-400' : 'text-blue-400'}`}>
                     {dbUser.role === 'admin' ? 'Admin Faksi' : 'Anggota Faksi'}
                   </p>
