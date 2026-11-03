@@ -147,7 +147,8 @@ export async function POST(req: Request) {
       const updated = currentUsers.map((u: any) => {
         const uId = String(u.id || '').toLowerCase();
         const uName = String(u.username || '').replace('@', '').toLowerCase();
-        if (uId === cleanTarget || uName === cleanTarget) {
+        const uIc = String(u.icName || u.ic_name || '').toLowerCase();
+        if (uId === cleanTarget || uName === cleanTarget || (uIc && uIc === cleanTarget)) {
           return { ...u, whiteMoney: Number(whiteMoney) || 0 };
         }
         return u;
