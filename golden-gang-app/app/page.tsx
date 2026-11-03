@@ -115,7 +115,7 @@ export default function DashboardPage() {
                 {(admins || []).filter(a => a && a.status === 'approved').map(acc => (
                   <div key={acc.id} className="flex justify-between items-center bg-[#07090D] p-2.5 rounded-xl border border-white/5 hover:border-amber-500/30 transition-colors">
                     <span className="text-gray-300 text-xs font-bold">
-                      Rekening Kas <span className="text-amber-400">@{acc.username}</span>
+                      Rekening Kas <span className="text-amber-400">{acc.icName || acc.username}</span>
                       <span className="text-[9.5px] text-amber-500/80 ml-1.5 font-normal uppercase">
                         (ADMIN{acc.id === dbUser?.id ? ' • AKUN SAYA' : ''})
                       </span>
