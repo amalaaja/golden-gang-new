@@ -50,6 +50,19 @@ export default function ShopPage() {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const router = useRouter();
+
+  // Sinkronkan selectedAdminId saat daftar admins selesai dimuat
+  useEffect(() => {
+    if (admins && admins.length > 0) {
+      if (!selectedAdminId || !admins.some(a => a.id === selectedAdminId)) {
+        const myAdmin = admins.find(a => 
+          (dbUser?.id && a.id === dbUser.id) || 
+          (dbUser?.username && (a.username || '').toLowerCase() === dbUser.username.toLowerCase())
+        );
+        setSelectedAdminId(myAdmin ? myAdmin.id : admins[0].id);
+      }
+    }
+  }, [admins, selectedAdminId, dbUser]);
   
   // Checkout Success Modal State
   const [lastCheckout, setLastCheckout] = useState<{
