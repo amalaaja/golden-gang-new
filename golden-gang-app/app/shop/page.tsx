@@ -145,7 +145,7 @@ export default function ShopPage() {
       const activeUser = dbUser?.icName || (dbUser?.username || 'member').replace('@', '');
       const itemDetails = cart.map(i => `${i.name} (${i.qty}x)`).join(', ');
       const notePayment = paymentMethod === 'uang_putih' 
-        ? `Pembelian Toko Internal (Uang Putih) - Rek: ${targetAdminName}`
+        ? `Pembelian Toko Internal (Uang Putih) - Rek: ${targetAdminName} [id:${targetAdmin?.id || selectedAdminId || ''}]`
         : `Pembelian Toko Internal (Uang Merah)`;
 
       addTransaction({
