@@ -33,7 +33,7 @@ export default function ProfilePage() {
 
         <div className="flex flex-col sm:flex-row items-center gap-6 pb-8 border-b border-white/10 relative z-10">
           <div className="w-20 h-20 rounded-3xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 font-display font-black text-3xl shadow-glow-gold">
-            {dbUser.username.charAt(0).toUpperCase()}
+            {(dbUser.icName || dbUser.username).charAt(0).toUpperCase()}
           </div>
           <div className="text-center sm:text-left">
             <div className="flex items-center justify-center sm:justify-start gap-2">
