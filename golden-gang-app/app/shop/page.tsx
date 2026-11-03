@@ -130,7 +130,7 @@ export default function ShopPage() {
       }
 
       const targetAdmin = admins.find(a => a.id === selectedAdminId) || admins[0];
-      const targetAdminName = targetAdmin ? targetAdmin.username.replace('@', '') : 'alvaro';
+      const targetAdminName = targetAdmin?.icName || (targetAdmin ? targetAdmin.username.replace('@', '') : 'Admin');
 
       // 1. Verifikasi Kecukupan Stok Item
       for (const item of cart) {
@@ -142,10 +142,10 @@ export default function ShopPage() {
       }
 
       // 2. Catat Permintaan Pembelian ke Antrian Validasi (Wajib di-ACC Admin)
-      const activeUser = (dbUser?.username || 'member').replace('@', '');
+      const activeUser = dbUser?.icName || (dbUser?.username || 'member').replace('@', '');
       const itemDetails = cart.map(i => `${i.name} (${i.qty}x)`).join(', ');
       const notePayment = paymentMethod === 'uang_putih' 
-        ? `Pembelian Toko Internal (Uang Putih) - Rek: @${targetAdminName}`
+        ? `Pembelian Toko Internal (Uang Putih) - Rek: ${targetAdminName}`
         : `Pembelian Toko Internal (Uang Merah)`;
 
       addTransaction({
@@ -533,7 +533,7 @@ export default function ShopPage() {
                     className="w-full bg-[#050608] border border-white/10 text-white rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-amber-500/50 shadow-inner"
                   >
                     {admins.map(a => (
-                      <option key={a.id} value={a.id}>@{a.username} ({formatMoney(a.whiteMoney)})</option>
+                      <option key={a.id} value={a.id}>{a.icName || a.username} ({formatMoney(a.whiteMoney)})</option>
                     ))}
                   </select>
                 </div>
