@@ -151,7 +151,7 @@ export default function TransaksiPage() {
         totalPrice: totalVal,
         paymentMethod: paymentMethod,
         note: assetType === 'uang_putih'
-          ? (note ? `${note} (Rek: ${adminDisplayName})` : `Rek: ${adminDisplayName}`)
+          ? (note ? `${note} (Rek: ${adminDisplayName} [id:${targetAdmin?.id || ''}])` : `Rek: ${adminDisplayName} [id:${targetAdmin?.id || ''}]`)
           : (note || (assetType === 'barang' 
               ? `${txType === 'deposit' ? 'Setoran Barang' : 'Penarikan Barang'} - ${logDetails}` 
               : (txType === 'deposit' ? `Setoran ${logDetails}` : `Penarikan ${logDetails}`))),
