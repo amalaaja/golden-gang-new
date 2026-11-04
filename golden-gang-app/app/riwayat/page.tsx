@@ -76,6 +76,7 @@ export default function RiwayatPage() {
     qtyText: string; 
     isPositive: boolean;
     itemList?: string[];
+    itemQtys?: number[];
   } => {
     if (!tx) return { assetName: '-', qtyText: '-', isPositive: false };
 
@@ -114,11 +115,13 @@ export default function RiwayatPage() {
     if (isPurchase) {
       if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
         const itemList = tx.itemsPayload.map((i: any) => `${i.name || 'Item'} (${Number(i.qty) || 1}x)`);
+        const itemQtys = tx.itemsPayload.map((i: any) => Number(i.qty) || 1);
         const names = itemList.join(', ');
         const totalUnits = tx.itemsPayload.reduce((sum: number, i: any) => sum + (Number(i.qty) || 1), 0);
         return {
           assetName: names,
           itemList: itemList,
+          itemQtys: itemQtys,
           qtyText: `-${totalUnits}x`,
           isPositive: false
         };
@@ -127,18 +130,23 @@ export default function RiwayatPage() {
       const parts = raw.split(',').map((s: string) => s.trim()).filter(Boolean);
       if (parts.length > 1) {
         let totalUnits = 0;
+        const itemQtys: number[] = [];
         const itemList = parts.map((p: string) => {
           const match = p.match(/^(.*?)\s*\((\d+)x\)$/);
           if (match) {
-            totalUnits += Number(match[2]) || 1;
+            const q = Number(match[2]) || 1;
+            totalUnits += q;
+            itemQtys.push(q);
             return `${match[1].trim()} (${match[2]}x)`;
           }
           totalUnits += 1;
+          itemQtys.push(1);
           return p;
         });
         return {
           assetName: raw,
           itemList: itemList,
+          itemQtys: itemQtys,
           qtyText: `-${totalUnits}x`,
           isPositive: false
         };
@@ -589,16 +597,23 @@ export default function RiwayatPage() {
                               )}
                             </td>
                             <td className="px-3.5 py-2 text-center whitespace-nowrap">
-                              <span className={`inline-flex items-center gap-0.5 font-mono-tech font-extrabold text-[11px] px-2 py-0.5 rounded-md border shadow-sm ${
-                                parsed.isPositive 
-                                  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' 
-                                  : 'text-rose-400 bg-rose-500/10 border-rose-500/30'
-                              }`}>
-                                {parsed.qtyText}
-                              </span>
-                              {hasMultiple && (
-                                <span className="block text-[8.5px] text-gray-500 font-sans mt-0.5 uppercase tracking-wider">
-                                  Total Unit
+                              {hasMultiple && parsed.itemQtys ? (
+                                <div className="flex flex-col gap-1 py-0.5 whitespace-normal">
+                                  {parsed.itemQtys.map((q, idx) => (
+                                    <div key={idx} className="flex items-center justify-center">
+                                      <span className="inline-flex items-center font-mono-tech font-extrabold text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-md shadow-sm">
+                                        -{q}x
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className={`inline-flex items-center gap-0.5 font-mono-tech font-extrabold text-[11px] px-2 py-0.5 rounded-md border shadow-sm ${
+                                  parsed.isPositive 
+                                    ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' 
+                                    : 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+                                }`}>
+                                  {parsed.qtyText}
                                 </span>
                               )}
                             </td>
