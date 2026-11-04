@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { 
   User, 
   signInAnonymously, 
@@ -931,157 +931,189 @@ export function GangProvider({ children }: { children: ReactNode }) {
     return docId;
   };
 
+  const approvingTxIds = useRef<Set<string>>(new Set());
+
   const approveTransaction = async (txId: string) => {
-    const adminName = dbUser?.username || 'admin';
+    if (!txId || approvingTxIds.current.has(txId)) return;
     const tx = transactions.find(t => t.id === txId);
     if (!tx || tx.status === 'approved') return;
 
-    // 1. Eksekusi Pembelian Toko Internal
-    if (tx.type === 'SHOP_PURCHASE') {
-      if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
-        for (const cartItem of tx.itemsPayload) {
-          // Cari item: prioritaskan exact ID, lalu exact nama barang
-          let currentItem = items.find(i => i.id === cartItem.id);
-          if (!currentItem) {
-            const cName = (cartItem?.name || '').toLowerCase().trim();
-            currentItem = items.find(i => (i?.name || '').toLowerCase().trim() === cName);
-          }
-          if (currentItem) {
-            let currentStock = Number(currentItem.stock) || 0;
-            if (isSupabaseConfigured) {
-              try {
-                let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
-                if (!suItem && currentItem.name) {
-                  const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
-                  suItem = res.data;
-                }
-                if (suItem && typeof suItem.stock === 'number') {
-                  currentStock = Number(suItem.stock);
-                }
-              } catch (e) {}
-            }
-            const newStock = Math.max(0, currentStock - (Number(cartItem.qty) || 1));
-            await updateItemStock(currentItem.id, newStock);
-          }
-        }
-      } else {
-        // Fallback: Parsing teks nama barang & kuantitas dari tx.details atau tx.items (misal: "Box Ammo-Rifle (1x)")
-        const rawItems = tx.details || tx.items || '';
-        const parts = rawItems.split(',').map((s: string) => s.trim()).filter(Boolean);
-        
-        for (const part of parts) {
-          const match = part.match(/^(.*?)\s*\((\d+)x\)$/);
-          const itemName = match ? match[1].trim() : part.replace(/\(\d+x\)/g, '').trim();
-          const qty = match ? Number(match[2]) || 1 : (Number(tx.itemQty) || 1);
-          const cleanName = itemName.toLowerCase().trim();
+    approvingTxIds.current.add(txId);
 
-          // 1. Prioritaskan EXACT MATCH nama barang terlebih dahulu agar tidak salah potong item lain!
-          let currentItem = items.find(i => (i?.name || '').trim().toLowerCase() === cleanName);
+    const adminName = dbUser?.username || 'admin';
+    const now = Date.now();
 
-          // 2. Jika tidak ada exact name, cari via selectedItemId
-          if (!currentItem && tx.selectedItemId) {
-            currentItem = items.find(i => i.id === tx.selectedItemId);
-          }
-
-          // 3. Fallback partial match hanya untuk nama panjang
-          if (!currentItem) {
-            currentItem = items.find(i => {
-              const iName = (i?.name || '').trim().toLowerCase();
-              return iName.length > 3 && (cleanName.includes(iName) || iName.includes(cleanName));
-            });
-          }
-
-          if (currentItem) {
-            let currentStock = Number(currentItem.stock) || 0;
-            if (isSupabaseConfigured) {
-              try {
-                let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
-                if (!suItem && currentItem.name) {
-                  const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
-                  suItem = res.data;
-                }
-                if (suItem && typeof suItem.stock === 'number') {
-                  currentStock = Number(suItem.stock);
-                }
-              } catch (e) {}
-            }
-            const newStock = Math.max(0, currentStock - qty);
-            await updateItemStock(currentItem.id, newStock);
-          }
-        }
+    // 0. Update status transaksi secara OPTIMISTIS seketika agar eksekusi ganda / spam-klik tidak pernah terjadi!
+    setTransactions(prev => {
+      const updated = prev.map(t => t.id === txId ? { 
+        ...t, 
+        status: 'approved' as const, 
+        validatedBy: adminName, 
+        validatedAt: new Date(now).toISOString(),
+        createdAtMs: now,
+        timestamp: new Date(now).toISOString()
+      } : t);
+      updated.sort((a, b) => {
+        const diff = getTxMillis(b) - getTxMillis(a);
+        if (diff !== 0) return diff;
+        return (b.id || '').localeCompare(a.id || '');
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gang_transactions', JSON.stringify(updated.slice(0, 100)));
+        } catch (e) {}
       }
+      return updated;
+    });
 
-      const totalCost = Number(tx.totalPrice || tx.amount) || 0;
-      const isRed = tx.paymentMethod === 'uang_merah' || (tx.note || '').toLowerCase().includes('merah');
-      if (isRed) {
-        // Pembelian pakai Uang Merah: Kas faksi bertambah karena pembeli menyetor uang merah
-        let curDirty = Number(gangStats?.dirtyMoney) || 0;
-        if (isSupabaseConfigured) {
-          try {
-            const { data: suStats } = await supabase.from('gang_stats').select('dirty_money').eq('id', 'main').maybeSingle();
-            if (suStats && typeof suStats.dirty_money === 'number') {
-              curDirty = Number(suStats.dirty_money);
+    try {
+      // 1. Eksekusi Pembelian Toko Internal
+      if (tx.type === 'SHOP_PURCHASE') {
+        if (Array.isArray(tx.itemsPayload) && tx.itemsPayload.length > 0) {
+          for (const cartItem of tx.itemsPayload) {
+            // Cari item: prioritaskan exact ID, lalu exact nama barang
+            let currentItem = items.find(i => i.id === cartItem.id);
+            if (!currentItem) {
+              const cName = (cartItem?.name || '').toLowerCase().trim();
+              currentItem = items.find(i => (i?.name || '').toLowerCase().trim() === cName);
             }
-          } catch (e) {}
-        }
-        await updateDirtyMoney(curDirty + totalCost);
-      } else {
-        // Pembelian pakai Uang Putih (Transfer ke Rekening Admin):
-        // 1. Duit di rekening ADMIN tujuan BERTAMBAH (+ totalCost)!
-        const explicitId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
-        let targetAdmin = explicitId
-          ? users.find(u => u.id === explicitId || (u.username || '').replace('@', '').toLowerCase() === explicitId.replace('@', '').toLowerCase())
-          : null;
+            if (currentItem) {
+              let currentStock = Number(currentItem.stock) || 0;
+              if (isSupabaseConfigured) {
+                try {
+                  let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                  if (!suItem && currentItem.name) {
+                    const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
+                    suItem = res.data;
+                  }
+                  if (suItem && typeof suItem.stock === 'number') {
+                    currentStock = Number(suItem.stock);
+                  }
+                } catch (e) {}
+              }
+              const newStock = Math.max(0, currentStock - (Number(cartItem.qty) || 1));
+              await updateItemStock(currentItem.id, newStock);
+            }
+          }
+        } else {
+          // Fallback: Parsing teks nama barang & kuantitas dari tx.details atau tx.items (misal: "Box Ammo-Rifle (10x), Weed Bag (10x)")
+          const rawItems = tx.details || tx.items || '';
+          const parts = rawItems.split(',').map((s: string) => s.trim()).filter(Boolean);
+          
+          for (const part of parts) {
+            const match = part.match(/^(.*?)\s*\((\d+)x\)$/);
+            const itemName = match ? match[1].trim() : part.replace(/\(\d+x\)/g, '').trim();
+            const qty = match ? Number(match[2]) || 1 : (Number(tx.itemQty) || 1);
+            const cleanName = itemName.toLowerCase().trim();
 
-        if (!targetAdmin) {
-          const combined = `${tx.details || ''} ${tx.note || ''}`;
-          const rekMatch = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
-                           combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() ||
-                           combined.match(/@(\w+)/)?.[1];
-          if (rekMatch) {
-            const clean = rekMatch.toLowerCase();
-            targetAdmin = users.find(u => 
-              (u.username || '').replace('@', '').toLowerCase() === clean ||
-              (u.icName || '').toLowerCase() === clean ||
-              u.id === rekMatch
-            );
+            // 1. Prioritaskan EXACT MATCH nama barang terlebih dahulu agar tidak salah potong item lain!
+            let currentItem = items.find(i => (i?.name || '').trim().toLowerCase() === cleanName);
+
+            // 2. Normalisasi karakter jika tidak langsung match
+            if (!currentItem) {
+              const normalizedClean = cleanName.replace(/[^a-z0-9]/g, '');
+              currentItem = items.find(i => (i?.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedClean);
+            }
+
+            // 3. Fallback partial match hanya untuk nama panjang yang spesifik
+            if (!currentItem) {
+              currentItem = items.find(i => {
+                const iName = (i?.name || '').trim().toLowerCase();
+                return iName.length > 3 && (cleanName.includes(iName) || iName.includes(cleanName));
+              });
+            }
+
+            if (currentItem) {
+              let currentStock = Number(currentItem.stock) || 0;
+              if (isSupabaseConfigured) {
+                try {
+                  let { data: suItem } = await supabase.from('items').select('stock').eq('id', currentItem.id).maybeSingle();
+                  if (!suItem && currentItem.name) {
+                    const res = await supabase.from('items').select('stock').ilike('name', currentItem.name).maybeSingle();
+                    suItem = res.data;
+                  }
+                  if (suItem && typeof suItem.stock === 'number') {
+                    currentStock = Number(suItem.stock);
+                  }
+                } catch (e) {}
+              }
+              const newStock = Math.max(0, currentStock - qty);
+              await updateItemStock(currentItem.id, newStock);
+            }
           }
         }
 
-        if (!targetAdmin) {
-          targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
-        }
-
-        if (targetAdmin) {
-          let currentBalance = Number(targetAdmin.whiteMoney) || 0;
+        const totalCost = Number(tx.totalPrice || tx.amount) || 0;
+        const isRed = tx.paymentMethod === 'uang_merah' || (tx.note || '').toLowerCase().includes('merah');
+        if (isRed) {
+          // Pembelian pakai Uang Merah: Kas faksi bertambah karena pembeli menyetor uang merah
+          let curDirty = Number(gangStats?.dirtyMoney) || 0;
           if (isSupabaseConfigured) {
             try {
-              let suUser = null;
-              if (targetAdmin.id) {
-                const res = await supabase.from('users').select('id, username, white_money').eq('id', targetAdmin.id).maybeSingle();
-                if (res?.data) suUser = res.data;
+              const { data: suStats } = await supabase.from('gang_stats').select('dirty_money').eq('id', 'main').maybeSingle();
+              if (suStats && typeof suStats.dirty_money === 'number') {
+                curDirty = Number(suStats.dirty_money);
               }
-              if (!suUser && targetAdmin.username) {
-                const cleanU = targetAdmin.username.replace('@', '');
-                const res = await supabase.from('users').select('id, username, white_money').ilike('username', cleanU).maybeSingle();
-                if (res?.data) suUser = res.data;
-              }
-              if (!suUser && (targetAdmin.icName || targetAdmin.username)) {
-                const cleanN = targetAdmin.icName || targetAdmin.username.replace('@', '');
-                const res = await supabase.from('users').select('id, username, white_money').ilike('ic_name', cleanN).maybeSingle();
-                if (res?.data) suUser = res.data;
-              }
-              if (suUser && typeof suUser.white_money === 'number') {
-                currentBalance = Number(suUser.white_money);
-              }
-            } catch (e) {
-              console.warn("Fetch fresh white_money in shop purchase err:", e);
+            } catch (e) {}
+          }
+          await updateDirtyMoney(curDirty + totalCost);
+        } else {
+          // Pembelian pakai Uang Putih (Transfer ke Rekening Admin):
+          // 1. Duit di rekening ADMIN tujuan BERTAMBAH (+ totalCost)!
+          const explicitId = tx.targetAdminId || (tx.note || '').match(/\[id:([^\]]+)\]/)?.[1]?.trim();
+          let targetAdmin = explicitId
+            ? users.find(u => u.id === explicitId || (u.username || '').replace('@', '').toLowerCase() === explicitId.replace('@', '').toLowerCase())
+            : null;
+
+          if (!targetAdmin) {
+            const combined = `${tx.details || ''} ${tx.note || ''}`;
+            const rekMatch = combined.match(/Rek:\s*@?([^\)\,\-\|]+)/i)?.[1]?.trim() ||
+                             combined.match(/\(@?([^\)\,\-\|]+)\)/i)?.[1]?.trim() ||
+                             combined.match(/@(\w+)/)?.[1];
+            if (rekMatch) {
+              const clean = rekMatch.toLowerCase();
+              targetAdmin = users.find(u => 
+                (u.username || '').replace('@', '').toLowerCase() === clean ||
+                (u.icName || '').toLowerCase() === clean ||
+                u.id === rekMatch
+              );
             }
           }
-          await updateWhiteMoney(targetAdmin.id, currentBalance + totalCost);
+
+          if (!targetAdmin) {
+            targetAdmin = admins.find(a => a.status === 'approved') || admins[0] || dbUser;
+          }
+
+          if (targetAdmin) {
+            let currentBalance = Number(targetAdmin.whiteMoney) || 0;
+            if (isSupabaseConfigured) {
+              try {
+                let suUser = null;
+                if (targetAdmin.id) {
+                  const res = await supabase.from('users').select('id, username, white_money').eq('id', targetAdmin.id).maybeSingle();
+                  if (res?.data) suUser = res.data;
+                }
+                if (!suUser && targetAdmin.username) {
+                  const cleanU = targetAdmin.username.replace('@', '');
+                  const res = await supabase.from('users').select('id, username, white_money').ilike('username', cleanU).maybeSingle();
+                  if (res?.data) suUser = res.data;
+                }
+                if (!suUser && (targetAdmin.icName || targetAdmin.username)) {
+                  const cleanN = targetAdmin.icName || targetAdmin.username.replace('@', '');
+                  const res = await supabase.from('users').select('id, username, white_money').ilike('ic_name', cleanN).maybeSingle();
+                  if (res?.data) suUser = res.data;
+                }
+                if (suUser && typeof suUser.white_money === 'number') {
+                  currentBalance = Number(suUser.white_money);
+                }
+              } catch (e) {
+                console.warn("Fetch fresh white_money in shop purchase err:", e);
+              }
+            }
+            await updateWhiteMoney(targetAdmin.id, currentBalance + totalCost);
+          }
         }
       }
-    }
 
     // Helper deteksi tipe mutasi secara tegas & mutlak
     const detailsStr = String(tx.details || tx.items || '').trim();
@@ -1330,54 +1362,33 @@ export function GangProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const now = Date.now();
-    // Update status transaksi ke APPROVED dan posisikan di waktu ACC terbaru
-    setTransactions(prev => {
-      const updated = prev.map(t => t.id === txId ? { 
-        ...t, 
-        status: 'approved' as const, 
-        validatedBy: adminName, 
-        validatedAt: new Date(now).toISOString(),
+      updateDoc(doc(db, TX_PATH, txId), {
+        status: 'approved',
+        validatedBy: adminName,
+        validatedAt: serverTimestamp(),
         createdAtMs: now,
-        timestamp: new Date(now).toISOString()
-      } : t);
-      updated.sort((a, b) => {
-        const diff = getTxMillis(b) - getTxMillis(a);
-        if (diff !== 0) return diff;
-        return (b.id || '').localeCompare(a.id || '');
-      });
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('gang_transactions', JSON.stringify(updated.slice(0, 100)));
-        } catch (e) {}
-      }
-      return updated;
-    });
-
-    updateDoc(doc(db, TX_PATH, txId), {
-      status: 'approved',
-      validatedBy: adminName,
-      validatedAt: serverTimestamp(),
-      createdAtMs: now,
-      timestamp: serverTimestamp()
-    }).catch(() => {});
-
-    if (isSupabaseConfigured) {
-      safeSupabase(
-        supabase.from('transactions').update({
-          status: 'approved',
-          created_at_ms: now
-        }).eq('id', txId)
-      );
-    }
-
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_tx_status', txId, status: 'approved', validatedBy: adminName })
+        timestamp: serverTimestamp()
       }).catch(() => {});
-    } catch (e) {}
+
+      if (isSupabaseConfigured) {
+        safeSupabase(
+          supabase.from('transactions').update({
+            status: 'approved',
+            created_at_ms: now
+          }).eq('id', txId)
+        );
+      }
+
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_tx_status', txId, status: 'approved', validatedBy: adminName })
+        });
+      } catch (e) {}
+    } finally {
+      approvingTxIds.current.delete(txId);
+    }
   };
 
   const rejectTransaction = async (txId: string) => {
